@@ -1,12 +1,13 @@
-pandas
-pyodbc
-openpyxl
-python-dotenv
-pytest
-pywin32
-pydantic>=2
-pyyaml>=6
-pydantic-settings
-pillow
+# --- Comunicación API ---
+requests==2.31.0
 
-xlrd
+# --- Procesamiento de Excel ---
+pandas==2.1.1
+openpyxl==3.1.2
+
+# --- Configuración y Entorno ---
+python-dotenv==1.0.0
+PyYAML==6.0.1
+
+# --- Monitoreo de Carpetas (Watcher) ---
+watchdog==3.0.0

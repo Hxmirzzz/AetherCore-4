@@ -1,68 +1,36 @@
-
-"""
-Procesador principal de archivos Excel de solicitudes.
-
-Orquesta el flujo completo:
-1. Lectura del archivo Excel
-2. Validación de estructura
-3. Mapeo a DTOs
-4. Inserción en BD
-5. Generación de respuesta
-6. Movimiento a carpeta GESTIONADOS
-"""
 from __future__ import annotations
 from pathlib import Path
 import logging
 import os
 import shutil
 from datetime import datetime
-from dataclasses import replace
-import openpyxl
 
 from src.application.processors.excel.excel_file_reader import ExcelFileReader
 from src.application.processors.excel.excel_processor_factory import ExcelProcessorFactory
-from src.application.services.insertion_service import InsertionService, ResultadoInsercion
+from src.application.services.api_service import ApiService
+from src.application.dto.servicio_dto import AetherServiceImportDto
 from src.domain.value_objects.cliente_folder import ClienteFolder
 from src.domain.value_objects.codigo_punto import CodigoPunto
-from src.infrastructure.config.settings import get_config
-from src.application.services.data_mapper_service import DataMapperService
-from src.application.dto.servicio_dto import ServicioDTO
-from src.application.dto.transaccion_dto import TransaccionDTO
 
 logger = logging.getLogger(__name__)
-Config = get_config()
 
 class ExcelProcessor:
     """
     Procesador principal de archivos Excel de solicitudes.
-    
-    Coordina el flujo completo de procesamiento similar a XMLProcessor y TXTProcessor.
     """
 
     def __init__(
         self,
         reader: ExcelFileReader | None = None,
-        insertion_service: InsertionService | None = None,
-        data_mapper_service: DataMapperService | None = None,
+        api_service: ApiService | None = None,
         base_solicitudes_dir: Path | None = None
     ):
         """
         Inicializa el procesador.
-        
-        Args:
-            reader: Lector de archivos Excel
-            insertion_service: Servicio de inserción en BD
-            data_mapper_service: Servicio de mapeo de datos
-            base_solicitudes_dir: Directorio base SOLICITUDES
         """
         self._reader = reader or ExcelFileReader()
-        self._insertion = insertion_service
-        self._data_mapper = data_mapper_service
-
-        if base_solicitudes_dir is None:
-            self._base_dir = Config.paths.base_dir / 'data' / 'SOLICITUDES'
-        else:
-            self._base_dir = base_solicitudes_dir
+        self._api_service = api_service
+        self._base_dir = base_solicitudes_dir or Path("data/SOLICITUDES")
 
     def procesar_archivo_excel(
         self,
@@ -80,15 +48,10 @@ class ExcelProcessor:
             True si procesó exitosamente, False en caso contrario
         """
         try:
-            logger.info(f"═══════════════════════════════════════════════════════")
-            logger.info(f"Procesando Excel: {ruta_excel.name}")
-            logger.info(f"Cliente: {cliente_folder}")
-            logger.info(f"═══════════════════════════════════════════════════════")
-            
-            info = self._reader.read_multiple_sheets(ruta_excel)
-            
+            logger.info(f"== Procesando: {ruta_excel.name} para Cliente: {cliente_folder} ==")
+        
+            info = self._reader.read_multiple_sheets(ruta_excel)    
             if not info:
-                logger.error(f"❌ El archivo está vacío o no se pudo leer ninguna hoja.")
                 self._manejar_excel_fallido(ruta_excel, cliente_folder, "Archivo vacío o ilegible")
                 return False
             
@@ -99,176 +62,141 @@ class ExcelProcessor:
                 return False
 
             nombre_hoja_params = next((k for k in info.keys() if "PARAMETRO" in k.upper()), None)
+            if nombre_hoja_params and hasattr(mapper, 'actualizar_parametros'):
+                mapper.actualizar_parametros(info.pop(nombre_hoja_params))
 
-            if nombre_hoja_params:
-                logger.info(f"Hoja PARAMETRO encontrada: {nombre_hoja_params}")
-                df_params = info.pop(nombre_hoja_params)
-                
-                if hasattr(mapper, 'actualizar_parametros'):
-                    mapper.actualizar_parametros(df_params)
-
-            dtos_list = []
-            hojas_ok = 0
+            dtos_a_enviar = []
+            mapeo_filas_origen = {}
             
             for nombre_hoja, df in info.items():
-                logger.info(f"Analizando hoja: '{nombre_hoja}' ({len(df)} filas)")
-
                 valido, error_msg = mapper.validar_estructura(df)
                 if not valido:
                     logger.warning(f"Saltando hoja '{nombre_hoja}' - {error_msg}")
                     continue
+
+                datos_hoja = mapper.mapear_a_dtos(df, f"{ruta_excel.name} [{nombre_hoja}]")
+            
+                for s_old, t_old, idx_fila in datos_hoja:
+                    punto_limpio = CodigoPunto.from_raw(str(s_old.cod_punto_origen)).parte_numerica.strip()
+
+                    dto = AetherServiceImportDto(
+                        # --- Datos del Servicio ---
+                        numero_pedido=s_old.numero_pedido,
+                        cod_os_cliente=s_old.cod_os_cliente,
+                        cod_cliente=s_old.cod_cliente,
+                        cod_sucursal=s_old.cod_sucursal,
+                        fecha_solicitud=str(s_old.fecha_solicitud),
+                        hora_solicitud=str(s_old.hora_solicitud),
+                        cod_concepto=s_old.cod_concepto,
+                        tipo_traslado=s_old.tipo_traslado,
+                        modalidad_servicio=s_old.modalidad_servicio,
+                        observaciones=s_old.observaciones,
+                        cod_punto_origen=punto_limpio,
+                        indicador_tipo_origen=s_old.indicador_tipo_origen,
+                        cod_punto_destino=s_old.cod_punto_destino,
+                        indicador_tipo_destino=s_old.indicador_tipo_destino,
+                        valor_billete=s_old.valor_billete,
+                        valor_moneda=s_old.valor_moneda,
+                        numero_kits_cambio=s_old.numero_kits_cambio,
+                        # --- Datos de Transacción ---
+                        cef_numero_planilla=t_old.numero_planilla,
+                        cantidad_bolsas_declaradas=t_old.cantidad_bolsas_declaradas,
+                        cantidad_sobres_declarados=t_old.cantidad_sobres_declarados,
+                        cantidad_cheques_declarados=t_old.cantidad_cheques_declarados,
+                        cantidad_documentos_declarados=t_old.cantidad_documentos_declarados,
+                        valor_billetes_declarado=t_old.valor_billetes_declarado,
+                        valor_monedas_declarado=t_old.valor_monedas_declarado,
+                        valor_total_declarado=t_old.valor_total_declarado,
+                        valor_total_declarado_letras=t_old.valor_total_declarado_letras,
+                        cef_es_custodia=t_old.es_custodia,
+                        cef_es_punto_a_punto=t_old.es_punto_a_punto
+                    )
+
+                    dtos_a_enviar.append(dto)
+                    key = len(dtos_a_enviar) - 1
+                    mapeo_filas_origen[key] = (nombre_archivo, idx_fila, s_old.numero_pedido)
                 
-                try:
-                    datos_hoja = mapper.mapear_a_dtos(df, f"{ruta_excel.name} [{nombre_hoja}]")
-                    if datos_hoja:
-                        for item in datos_hoja:
-                            dtos_list.append((item[0], item[1], item[2], nombre_hoja))
-                        hojas_ok += 1
-                        logger.info(f"✅ Hoja '{nombre_hoja}' procesada: {len(datos_hoja)} DTOs generados")
-
-                except Exception as e:
-                    logger.error(f"❌ Error procesando hoja '{nombre_hoja}': {e}")
-
-            if hojas_ok == 0:
-                self._manejar_excel_fallido(ruta_excel, cliente_folder, "No se procesó ninguna hoja válida")
+            if not dtos_a_enviar:
+                self._manejar_excel_fallido(ruta_excel, cliente_folder, "No se encontraron registros válidos en el archivo")
                 return False
 
-            logger.info(f"Total acumulado: {len(dtos_list)} servicios listos para procesar")
+            logger.info(f"🚀 Enviando {len(dtos_a_enviar)} servicios a VCashApp vía API...")
+            respuesta = self._api_service.upload_services(dtos_a_enviar)
 
-            exitosas_map = {}
-            fallidas_map = {}
-            errores = []
-            
-            if self._insertion is not None and dtos_list:  
-                if self._data_mapper is None:
-                    raise ValueError("DataMapperService no está configurado para validar puntos en Excel")
-
-                for servicio_dto, transaccion_dto, idx_fila, nombre_hoja in dtos_list:
-                    if nombre_hoja not in exitosas_map: exitosas_map[nombre_hoja] = set()
-                    if nombre_hoja not in fallidas_map: fallidas_map[nombre_hoja] = set()
-                    
-                    try:
-                        es_recoleccion = servicio_dto.cod_concepto == 1
-                        codigo_punto_real = (
-                            servicio_dto.cod_punto_origen if es_recoleccion 
-                            else servicio_dto.cod_punto_destino
-                        )
-
-                        codigo_punto_real = CodigoPunto.from_raw(str(codigo_punto_real)).parte_numerica.strip()
-                        
-                        punto_info = self._data_mapper.obtener_info_completa_punto(
-                            codigo_punto_real,
-                            servicio_dto.cod_cliente
-                        )
-                        
-                        if not punto_info:
-                            error_msg = f"Punto '{codigo_punto_real}' no existe en BD para cliente {servicio_dto.cod_cliente}."
-                            logger.warning(f"⚠️ Pedido {servicio_dto.numero_pedido}: {error_msg}")
-                            errores.append(f"Hoja '{nombre_hoja}', Fila {idx_fila + 1 + 5}: {error_msg}")
-                            fallidas_map[nombre_hoja].add(idx_fila)
-                            continue
-                        
-                        cod_sucursal_bd = punto_info['cod_sucursal']
-                        pk_punto_bd = punto_info['cod_punto_pk']
-                        pk_fondo_bd = punto_info['cod_fondo']
-                        cambios_servicio = {'cod_sucursal': cod_sucursal_bd}
-                        cambios_transaccion = {'cod_sucursal': cod_sucursal_bd}
-                        
-                        if es_recoleccion:
-                            cambios_servicio.update({
-                                'cod_punto_origen': pk_punto_bd,
-                                'indicador_tipo_origen': 'P',
-                                'cod_punto_destino': pk_fondo_bd if pk_fondo_bd else pk_punto_bd,
-                                'indicador_tipo_destino': 'F' if pk_fondo_bd else 'P'
-                            })
-                        else:
-                            cambios_servicio.update({
-                                'cod_punto_origen': pk_fondo_bd if pk_fondo_bd else pk_punto_bd,
-                                'indicador_tipo_origen': 'F' if pk_fondo_bd else 'P',
-                                'cod_punto_destino': pk_punto_bd,
-                                'indicador_tipo_destino': 'P'
-                            })
-
-                        servicio_final = replace(servicio_dto, **cambios_servicio)
-                        transaccion_final = replace(transaccion_dto, **cambios_transaccion)
-                        
-                        res = self._insertion.insertar_servicio_con_transaccion(
-                            servicio_final,
-                            transaccion_final
-                        )
-                        
-                        if res.exitoso:
-                            exitosas_map[nombre_hoja].add(idx_fila)
-                        else:
-                            errores.append(f"Pedido {servicio_dto.numero_pedido}: {res.error}")
-                            fallidas_map[nombre_hoja].add(idx_fila)
-                        
-                    except Exception as e:
-                        logger.error(f"Error inesperado: {e}")
-                        errores.append(f"Error critico en pedido {servicio_dto.numero_pedido}: {e}")
-                        fallidas_map[nombre_hoja].add(idx_fila)
-                
-                total_exitosos = sum(len(v) for v in exitosas_map.values())
-                total_fallidos = sum(len(v) for v in fallidas_map.values())
-                logger.info(f"Resultado Inserción: {total_exitosos} exitosos, {total_fallidos} fallidos")
-
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                nombre_base_limpio = ruta_excel.stem.replace('_NOVEDADES', '').replace('_OK', '')
-                nombre_base_limpio = nombre_base_limpio.split('_202')[0]
-
-                if total_exitosos > 0:
-                    gestionados_dir = cliente_folder.gestionados_path(self._base_dir)
-                    gestionados_dir.mkdir(parents=True, exist_ok=True)
-                    nombre_ok = f"{nombre_base_limpio}_{timestamp}{ruta_excel.suffix}"
-                    ruta_ok = gestionados_dir / nombre_ok
-
-                    if total_fallidos == 0:
-                        shutil.move(ruta_excel, ruta_ok)
-                        logger.info(f"✅ Archivo original movido a GESTIONADOS: {nombre_ok}")
-                        return True
-                    else:
-                        self._generar_copia_filtrada(ruta_excel, ruta_ok, exitosas_map)
-                        logger.info(f"Gestionados guardados en: {nombre_ok}")
-                    
-                if total_fallidos > 0:
-                    novedades_dir = cliente_folder.to_path(self._base_dir) / "NOVEDADES"
-                    novedades_dir.mkdir(parents=True, exist_ok=True)
-                    nombre_novedades = f"{nombre_base_limpio}_NOVEDADES_{timestamp}{ruta_excel.suffix}"
-                    ruta_novedades = novedades_dir / nombre_novedades
-                    ruta_txt = novedades_dir / f"{nombre_base_limpio}_NOVEDADES_{timestamp}.txt"
-
-                    self._generar_copia_filtrada(ruta_excel, ruta_novedades, fallidas_map, borrar_hojas_vacias=True)
-
-                    with open(ruta_txt, 'w', encoding='utf-8') as f:
-                        f.write(f"REPORTE DE NOVEDADES\nArchivo: {ruta_excel.name}\nFecha: {datetime.now()}\n")
-                        f.write("-" * 50 + "\n")
-                        f.write(f"Se generó un archivo Excel adjunto que contiene SOLO las filas con errores.\n")
-                        f.write(f"Los registros exitosos ({total_exitosos}) se movieron a la carpeta GESTIONADOS.\n\n")
-                        f.write("Detalle de errores:\n")
-                        for err in errores:
-                            f.write(f"- {err}\n")
-                    
-                    logger.warning(f"⚠️ Novedades guardadas en: {nombre_novedades}")
-
-                if ruta_excel.exists():
-                    try:
-                        os.remove(ruta_excel)
-                        logger.info(f"Archivo original eliminado: {ruta_excel.name}")
-                    except Exception as e:
-                        logger.error(f"Error al eliminar archivo original: {e}")
-            
+            if respuesta:
+                return self._gestionar_finalizacion(ruta_excel, cliente_folder, respuesta, mapeo_filas_origen)
             else:
-                self._mover_a_gestionados(ruta_excel, cliente_folder)
-
-            logger.info(f"═══════════════════════════════════════════════════════")
-            logger.info(f"✅ PROCESAMIENTO COMPLETADO: {ruta_excel.name}")
-            logger.info(f"═══════════════════════════════════════════════════════")
-            return True
+                self._manejar_excel_fallido(ruta_excel, cliente_folder, "Error al enviar servicios a VCashApp")
+                return False
             
         except Exception as e:
-            logger.exception(f"❌ Error crítico procesando Excel '{ruta_excel.name}'")
-            self._manejar_excel_fallido(ruta_excel, cliente_folder, f"Error inesperado: {e}")
+            logger.exception(f"❌ Error crítico: {e}")
+            self._manejar_excel_fallido(ruta_excel, cliente_folder, str(e))
             return False
+
+    def _gestionar_finalizacion(self, ruta_excel: Path, cliente_folder: ClienteFolder, respuesta: dict, mapeo: dict) -> bool:
+        """
+        Gestiona la finalización del procesamiento del archivo Excel.
+        """
+        exitosos_indices = {}
+        fallidos_indices = {}
+        errores_log = []
+        
+        for idx, result in enumerate(respuesta.get('details', [])):
+            hoja, fila_idx, pedido = mapeo[idx]
+
+            if result['success']:
+                if hoja not in exitosos_indices: exitosos_indices[hoja] = set()
+                exitosos_indices[hoja].add(fila_idx)
+            else:
+                if hoja not in fallidos_indices: fallidos_indices[hoja] = set()
+                fallidos_indices[hoja].add(fila_idx)
+                errores_log.append(f"Fila {fila_idx + 6} (Hoja {hoja}): Pedido {pedido} -> {result['message']}")
+
+        total_exitosos = sum(len(v) for v in exitosos_indices.values())
+        total_fallidos = sum(len(v) for v in fallidos_indices.values())
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nombre_base = ruta_excel.stem.replace('_NOVEDADES', '').replace('_OK', '').split('_202')[0]
+
+        if total_exitosos > 0:
+            gestionados_dir =  cliente_folder.gestionados_path(self._base_dir)
+            gestionados_dir.mkdir(parents=True, exist_ok=True)
+            ruta_ok = gestionados_dir / f"{nombre_base}_OK_{timestamp}{ruta_excel.suffix}"
+
+            if total_fallidos == 1:
+                shutil.move(str(ruta_excel), str(ruta_ok))
+                logger.info(f"✅ Archivo completo movido a Gestionados")
+            else:
+                self._generar_copia_filtrada(ruta_excel, ruta_ok, exitosos_indices)
+                logger.info(f"📁 Copia de exitosos guardada en GESTIONADOS")
+
+        if total_fallidos > 0:
+            novedades_dir = cliente_folder.to_path(self._base_dir) / "NOVEDADES"
+            novedades_dir.mkdir(parents=True, exist_ok=True)
+            ruta_novedades = novedades_dir / f"{nombre_base}_NOVEDADES_{timestamp}{ruta_excel.suffix}"
+            self._generar_copia_filtrada(ruta_excel, ruta_novedades, fallidos_indices, borrar_hojas_vacias=True)
+            
+            ruta_txt = novedades_dir / f"{nombre_base}_NOVEDADES_{timestamp}.txt"
+            with open(ruta_txt, 'w', encoding='utf-8') as f:
+                f.write(f"REPORTE DE NOVEDADES - AETHERCORE 4\n")
+                f.write(f"Archivo: {ruta_excel.name}\n")
+                f.write(f"Resultado API: {respuesta.get('summary')}\n")
+                f.write("-" * 60 + "\n")
+                for err in errores_log:
+                    f.write(f"- {err}\n")
+            
+            logger.warning(f"⚠️ Se generó archivo de NOVEDADES con {total_fallidos} errores")
+
+
+        if ruta_excel.exists():
+            try:
+                os.remove(ruta_excel)
+            except Exception as e:
+                logger.error(f"❌ Error al eliminar archivo original: {e}")  
+
+        logger.info(f"=== PROCESO FINALIZADO: {total_exitosos} OK / {total_fallidos} ERROR ===")
+        return True          
 
     def _generar_copia_filtrada(self, ruta_origen: Path, ruta_destino: Path, filas_a_mantener: dict, borrar_hojas_vacias: bool = True):
         """

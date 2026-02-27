@@ -1,24 +1,19 @@
-env: dev
+app:
+  name: "AetherCore 4 - API Client"
+  version: "4.0.0"
 
-paths:
-  base_dir: .
-  logs_dir: ./logs
-  in_txt: ./data/in/txt
-  out_txt: ./data/out/txt
-  in_xml: ./data/in/xml
-  out_xml: ./data/out/xml
-  handled_txt: ./data/handled/txt
-  handled_xml: ./data/handled/xml
-  errors_xml: ./logs/errors/xml
-  main_log_name: aethercore.log
+storage:
+  input_path: "data/input"
+  processed_path: "data/processed"
+  failed_path: "data/failed"
+  logs_path: "logs"
 
-database:
-  conn_str: ""  # si se deja vacío aquí, se tomará de la variable de entorno MSSQL_CONN_STR
+api:
+  timeout: 30
+  max_retries: 3
+  upload_endpoint: "AetherCore/upload-services"
+  login_endpoint: "Account/Login" 
 
-logs:
-  level: INFO
-  console: true
-  # main_log: aethercore.log  # opcional; si no, toma paths.main_log_name
-
-runtime:
-  monitor_interval_seconds: 30
+watcher:
+  use_polling: false
+  patterns: ["*.xlsx"]
