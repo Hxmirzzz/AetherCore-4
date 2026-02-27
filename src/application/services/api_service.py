@@ -1,8 +1,7 @@
 import time
 import requests
 import logging
-from typing import List
-from shared import result
+from typing import List, Optional
 from src.application.dto.servicio_dto import AetherServiceImportDto
 
 class ApiService:

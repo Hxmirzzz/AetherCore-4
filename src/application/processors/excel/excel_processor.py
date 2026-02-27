@@ -50,7 +50,7 @@ class ExcelProcessor:
         try:
             logger.info(f"== Procesando: {ruta_excel.name} para Cliente: {cliente_folder} ==")
         
-            info = self._reader.read_multiple_sheets(ruta_excel)    
+            info = self._reader.read_multiple_sheets(ruta_excel)
             if not info:
                 self._manejar_excel_fallido(ruta_excel, cliente_folder, "Archivo vacío o ilegible")
                 return False
@@ -77,7 +77,7 @@ class ExcelProcessor:
                 datos_hoja = mapper.mapear_a_dtos(df, f"{ruta_excel.name} [{nombre_hoja}]")
             
                 for s_old, t_old, idx_fila in datos_hoja:
-                    punto_limpio = CodigoPunto.from_raw(str(s_old.cod_punto_origen)).parte_numerica.strip()
+                    punto = CodigoPunto.from_raw(str(s_old.cod_punto_origen)).parte_numerica.strip()
 
                     dto = AetherServiceImportDto(
                         # --- Datos del Servicio ---
@@ -91,9 +91,9 @@ class ExcelProcessor:
                         tipo_traslado=s_old.tipo_traslado,
                         modalidad_servicio=s_old.modalidad_servicio,
                         observaciones=s_old.observaciones,
-                        cod_punto_origen=punto_limpio,
+                        cod_punto_origen=punto,
                         indicador_tipo_origen=s_old.indicador_tipo_origen,
-                        cod_punto_destino=s_old.cod_punto_destino,
+                        cod_punto_destino="",
                         indicador_tipo_destino=s_old.indicador_tipo_destino,
                         valor_billete=s_old.valor_billete,
                         valor_moneda=s_old.valor_moneda,
