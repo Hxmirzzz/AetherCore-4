@@ -7,8 +7,7 @@ import logging
 import re
 
 from src.application.interfaces.i_excel_mapper import BaseExcelMapper
-from src.application.dto.servicio_dto import ServicioDTO
-from src.application.dto.transaccion_dto import TransaccionDTO
+from src.application.dto.servicio_dto import AetherServiceImportDto
 
 logger = logging.getLogger(__name__)
 
@@ -112,51 +111,36 @@ class StandardExcelMapper(BaseExcelMapper):
         except Exception as e:
             return {'error': str(e), 'archivo_valido': False}
 
-    def mapear_a_dtos(self, df: pd.DataFrame, nombre_archivo: str) -> List[Tuple[ServicioDTO, TransaccionDTO, int]]:
+    def mapear_a_dtos(self, df: pd.DataFrame, nombre_archivo: str) -> List[Tuple[AetherServiceImportDto, int]]:
         """
         Detecta el tipo de formato (ATM vs Oficina) fila a fila o por estructura
         y convierte a DTOs.
         """
         dtos = []
-        errores = []
-        
         cols = df.columns
         es_formato_atm = 'GAVETA_1' in cols
         es_formato_kits = any('KIT' in col for col in cols)
 
-        if es_formato_kits:
-            tipo_log = "Kits (Paquetes)"
-        elif es_formato_atm:
-            tipo_log = "ATM (Gavetas)"
-        else:
-            tipo_log = "Oficina (Denominaciones)"
-
-        logger.info(f"Procesando archivo {nombre_archivo} ({tipo_log})")
-
         for idx, row in df.iterrows():
             raw_codigo = str(row.get('CODIGO') or row.get('COD. UNICO', '')).strip().lower()
-            if not raw_codigo or raw_codigo == "nan" or raw_codigo == "none": continue
+            if not raw_codigo or raw_codigo == "nan": continue
+
             try:
                 if es_formato_kits:
-                    resultado = self._procesar_fila_kits(row, nombre_archivo, idx)
+                    dto = self._procesar_fila_kits(row, nombre_archivo, idx)
                 elif es_formato_atm:
-                    resultado = self._procesar_fila_atm(row, nombre_archivo, idx)
+                    dto = self._procesar_fila_atm(row, nombre_archivo, idx)
                 else:
-                    resultado = self._procesar_fila_oficina(row, nombre_archivo, idx)
+                    dto = self._procesar_fila_oficina(row, nombre_archivo, idx)
                 
-                dtos.append((resultado[0], resultado[1], idx))
+                dtos.append((dto, idx))
 
             except Exception as e:
-                error_msg = f"Error al procesar fila {idx}: {str(e)}"
-                errores.append((idx, error_msg))
-                logger.error(error_msg)
-
-        if errores:
-            logger.warning(f"Se encontraron {len(errores)} errores en el archivo {nombre_archivo}")
+                logger.error(f"Error al procesar fila {idx}: {str(e)}")
 
         return dtos
 
-    def _procesar_fila_kits(self, row: pd.Series, nombre_archivo: str, idx: int) -> Tuple[ServicioDTO, TransaccionDTO]:
+    def _procesar_fila_kits(self, row: pd.Series, nombre_archivo: str, idx: int) -> AetherServiceImportDto:
         """
         Procesa una fila del formato de kits (paquetes)
         """
@@ -205,7 +189,7 @@ class StandardExcelMapper(BaseExcelMapper):
         )
 
     # ATM
-    def _procesar_fila_atm(self, row: pd.Series, nombre_archivo: str, idx: int) -> Tuple[ServicioDTO, TransaccionDTO]:
+    def _procesar_fila_atm(self, row: pd.Series, nombre_archivo: str, idx: int) -> AetherServiceImportDto:
         valor_calculado = Decimal(0)
         detalle_str = []
         
@@ -243,7 +227,7 @@ class StandardExcelMapper(BaseExcelMapper):
         )
 
     # Oficina
-    def _procesar_fila_oficina(self, row: pd.Series, archivo: str, idx: int) -> Tuple[ServicioDTO, TransaccionDTO]:
+    def _procesar_fila_oficina(self, row: pd.Series, archivo: str, idx: int) -> AetherServiceImportDto:
         valor_billete = Decimal('0')
         valor_moneda = Decimal('0')
         patron_billete = re.compile(r'^(\d+)(NF|AF|NUEVA|ANTIGUA)?$')
@@ -281,120 +265,49 @@ class StandardExcelMapper(BaseExcelMapper):
         self, row, valor_billete: Decimal, valor_moneda: Decimal, 
         es_atm: bool, archivo: str, idx: int, detalle_tecnico: str = "",
         forzar_provision: bool = False, cant_kits: int = 0
-    ) -> Tuple[ServicioDTO, TransaccionDTO]:
-        valor_calculado = valor_billete + valor_moneda
-        valor_declarado = self._parse_valor_monetario(row['VALOR_TOTAL'])
+    ) -> AetherServiceImportDto:
 
-        if valor_calculado > 0:
-            valor_final = valor_calculado
-        else:
-            valor_final = valor_declarado
-            if valor_declarado > 0 and valor_billete == 0 and valor_moneda == 0:
-                valor_billete = valor_declarado
-
-        try:
-            f_raw = row.get('FECHA_SERVICIO') or row.get('FECHA')
-            fecha_servicio = self._parse_fecha(f_raw)
-        except:
-            fecha_servicio = date.today()
-
-        try:
-            fecha_solicitud = self._parse_fecha(row.get('FECHA_SOLICITUD'))
-        except:
-            fecha_solicitud = date.today()
-
-        cod_os_cliente_raw = str(row.get('NUMERO_PEDIDO', '')).upper().strip()
-        cod_os_cliente = None
-        if cod_os_cliente_raw and cod_os_cliente_raw.lower() != 'nan' and cod_os_cliente_raw.lower() != 'none':
-            cod_os_cliente = cod_os_cliente_raw.split('.')[0]
+        valor_final = valor_billete + valor_moneda
+        if valor_final == 0:
+            valor_final = self._parse_valor_monetario(row['VALOR_MONETARIO'])
+            valor_billete = valor_final
+        
+        fecha_serv = self._parse_fecha(row.get('FECHA_SERVICIO') or row.get('FECHA'))
+        fecha_sol = self._parse_fecha(row.get('FECHA_SOLICITUD'))
 
         modalidad_raw = str(row.get('MODALIDAD', '')).upper().strip()
 
         if forzar_provision:
-            es_recoleccion = False
-            cod_concepto = 2
-            tipo_transaccion = 'PV'
+            cod_con = 2
         else:
             if "RECOLECCION" in modalidad_raw or "RECOLECCIÓN" in modalidad_raw:
-                es_recoleccion = True
-                cod_concepto = 1
-                tipo_transaccion = 'RC'
-            elif "PROVISION" in modalidad_raw or "PROVISIÓN" in modalidad_raw:
-                es_recoleccion = False
-                cod_concepto = 3 if es_atm else 2
-                tipo_transaccion = 'PV'
+                cod_con = 1
             else:
-                es_recoleccion = False
-                cod_concepto = 2
-                tipo_transaccion = 'PV'
-
-        obs = str(row.get('OBSERVACION', '')).strip()
-        if detalle_tecnico:
-            obs = f"{obs} || Detalle: {detalle_tecnico}".strip()
-            obs = obs[:500]
+                cod_con = 3 if es_atm else 2
 
         codigo_punto = str(row['CODIGO']).strip()
-        
-        if es_recoleccion:
-            origen = codigo_punto
-            tipo_origen = 'P'
-            destino = "FONDO"
-            tipo_destino = 'F'
-        else:
-            origen = "FONDO"
-            tipo_origen = 'F'
-            destino = codigo_punto
-            tipo_destino = 'P'
 
-        ahora = datetime.now()
-        timestamp = ahora.strftime('%H%M%S%f')
-        sufijo = f"{idx:03d}"
-        numero_pedido_sistema = f"{self.cod_cliente}{ahora.strftime('%Y%m%d')}{timestamp}{sufijo}"
-
-        servicio = ServicioDTO(
-            numero_pedido=numero_pedido_sistema,
+        return AetherServiceImportDto(
             cod_cliente=int(self.cod_cliente),
             cod_sucursal=1,
-            cod_concepto=cod_concepto,
-            tipo_traslado='N',
-            fecha_solicitud=fecha_solicitud,
-            hora_solicitud=datetime.now().time(),
-            fecha_programacion=fecha_servicio,
-            hora_programacion=time(8, 0),
-            cod_estado=0,
-
-            cod_cliente_origen=int(self.cod_cliente),
-            cod_punto_origen=origen,
-            indicador_tipo_origen=tipo_origen,
-
-            cod_cliente_destino=int(self.cod_cliente),
-            cod_punto_destino=destino,
-            indicador_tipo_destino=tipo_destino,
-            
-            fallido=False,
+            fecha_solicitud=str(fecha_sol),
+            hora_solicitud=datetime.now().strftime("%H:%M:%S"),
+            cod_concepto=cod_con,
+            cod_punto_origen=codigo_punto,
+            cod_punto_destino="",
+            numero_pedido=str(row.get('NUMERO_PEDIDO', '')),
+            cod_os_cliente=str(row.get('NUMERO_PEDIDO', '')),
+            observaciones=f"{row.get('OBSERVACION', '')} || {detalle_tecnico}".strip()[:450],
             valor_billete=valor_billete,
             valor_moneda=valor_moneda,
             valor_servicio=valor_final,
-            cod_os_cliente=cod_os_cliente,
             numero_kits_cambio=cant_kits,
-            modalidad_servicio='2',
-            observaciones=obs,
-            archivo_detalle=archivo
-        )
 
-        transaccion = TransaccionDTO(
-            cod_sucursal=1,
-            fecha_registro=datetime.now(),
-            usuario_registro_id=self.DEFAULT_USER_ID,
-            tipo_transaccion=tipo_transaccion,
-            divisa="COP",
-            valor_billetes_declarado=servicio.valor_billete,
-            valor_monedas_declarado=servicio.valor_moneda,
-            valor_total_declarado= servicio.valor_servicio,
-            estado_transaccion='RegistroTesoreria'
+            cef_numero_planilla=0,
+            valor_total_declarado=valor_final,
+            cef_divisa="COP",
+            cef_tipo_transaccion="RC" if cod_con == 1 else "PV"
         )
-
-        return (servicio, transaccion)
 
     def _parse_fecha(self, val):
         """Intenta parsear fecha dd/mm/yyyy o yyyy-mm-dd"""

@@ -41,9 +41,9 @@ class ApplicationContainer:
         if self._api_service is None:
             conf = self.config()
             self._api_service = ApiService(
-                base_url=conf.api_base_url,
-                username=conf.api_username,
-                password=conf.api_password,
+                base_url=conf.api.base_url, 
+                username=conf.api.auth_user,
+                password=conf.api.auth_password
             )
         return self._api_service
 

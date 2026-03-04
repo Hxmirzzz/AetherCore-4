@@ -6,8 +6,7 @@ import pandas as pd
 import logging
 
 from src.application.interfaces.i_excel_mapper import BaseExcelMapper
-from src.application.dto.servicio_dto import ServicioDTO
-from src.application.dto.transaccion_dto import TransaccionDTO
+from src.application.dto.servicio_dto import AetherServiceImportDto
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +50,7 @@ class EmergencyMapper(BaseExcelMapper):
         
         return True, "Estructura válida"
 
-    def obtener_resumen(self, df: pd.DataFrame) -> Dict[str, Any]:
-        return {
-            'total_servicios': len(df),
-            'archivo_valido': True
-        }
-
-    def mapear_a_dtos(self, df: pd.DataFrame, nombre_archivo: str) -> List[Tuple[ServicioDTO, TransaccionDTO, int]]:
+    def mapear_a_dtos(self, df: pd.DataFrame, nombre_archivo: str) -> List[Tuple[AetherServiceImportDto, int]]:
         dtos = []
         logger.info(f"Procesando archivo Emergency: {nombre_archivo}")
 
@@ -68,9 +61,6 @@ class EmergencyMapper(BaseExcelMapper):
         detalle_moneda = info_kit['moneda']['detalle']
         unidad_billete = info_kit['billete']['valor']
         detalle_billete = info_kit['billete']['detalle']
-
-        logger.info(f"Unidad Moneda: {detalle_moneda}, Unidad Billete: {detalle_billete}")
-        logger.info(f"Valores de kits: Moneda={unidad_moneda}, Billete={unidad_billete}")
 
         for idx, row in df.iterrows():
             try:
@@ -87,60 +77,33 @@ class EmergencyMapper(BaseExcelMapper):
                 total_billete = Decimal(qty_billete) * unidad_billete
                 valor_servicio = total_moneda + total_billete
                 
-                fecha_raw = row.get(self.col_fecha)
-                fecha = self._parsear_fecha(fecha_raw)
-                
+                fecha_serv = self._parsear_fecha(row.get(self.col_fecha))
                 now = datetime.now()
-                numero_pedido = f"{self.cod_cliente}{pedido}"
-                obs_parts = []
-                if qty_moneda > 0:
-                    obs_parts.append(f"Kits Moneda: {qty_moneda} [{detalle_moneda}]")
-                if qty_billete > 0:
-                    obs_parts.append(f"Kits Billete: {qty_billete} [{detalle_billete}]")
-                obs = ", ".join(obs_parts)
-                if not obs:
-                    obs = "No se especificaron kits"
 
-                servicio = ServicioDTO(
-                    numero_pedido=numero_pedido,
+                obs = f"Kits Moneda: {qty_moneda} [{detalle_moneda}], Kits Billete: {qty_billete} [{detalle_billete}]"[:450]
+
+                dto = AetherServiceImportDto(
                     cod_cliente=int(self.cod_cliente),
                     cod_sucursal=1,
+                    fecha_solicitud=str(now.date()),
+                    hora_solicitud=now.strftime("%H:%M:%S"),
                     cod_concepto=2,
-                    tipo_traslado='N',
-                    fecha_solicitud=now.date(),
-                    hora_solicitud=now.time(),
-                    fecha_programacion=fecha,
-                    hora_programacion=time(8,0),
-                    cod_estado=0,
-                    cod_cliente_origen=int(self.cod_cliente),
-                    cod_punto_origen="FONDO", indicador_tipo_origen='F',
-                    cod_cliente_destino=int(self.cod_cliente),
-                    cod_punto_destino=codigo, indicador_tipo_destino='P',
-                    fallido=False,
+                    cod_punto_origen=codigo, 
+                    cod_punto_destino="",
+                    numero_pedido=f"{self.cod_cliente}{pedido}",
+                    cod_os_cliente=pedido,
+                    observaciones=obs,
                     valor_billete=total_billete,
                     valor_moneda=total_moneda,
                     valor_servicio=valor_servicio,
-                    cod_os_cliente=pedido,
                     numero_kits_cambio=qty_moneda + qty_billete,
-                    modalidad_servicio='2',
-                    observaciones=obs[:455],
-                    archivo_detalle=nombre_archivo
-                )
-
-                transaccion = TransaccionDTO(
-                    cod_sucursal=1,
-                    fecha_registro=now,
-                    usuario_registro_id=self.DEFAULT_USER_ID,
-                    tipo_transaccion='PV',
-                    divisa='COP',
-                    valor_billetes_declarado=total_billete,
-                    valor_monedas_declarado=total_moneda,
+                    cef_numero_planilla=0,
                     valor_total_declarado=valor_servicio,
-                    estado_transaccion='ProvisionEnProceso',
-                    novedad_informativa=obs[:455]
+                    cef_divisa="COP",
+                    cef_tipo_transaccion="PV"
                 )
 
-                dtos.append((servicio, transaccion, idx))
+                dtos.append((dto, idx))
 
             except Exception as e:
                 logger.error(f"Error procesando fila {idx}: {e}")
