@@ -1,212 +1,225 @@
 """
-Console Runner para AetherCore.
+Console Runner para AetherCore 4 (API Client).
 
-- Lee configuración.
-- Resuelve dependencias.
-- Ejecuta modos --once o --watch para XML, TXT y EXCEL.
+Uso:
+    # Procesar todos los archivos Excel pendientes (una vez)
+    python -m src.presentation.console.console_app --once
+    
+    # Monitorear carpetas y procesar nuevos archivos
+    python -m src.presentation.console.console_app --watch
+    
+    # Procesar solo un cliente específico
+    python -m src.presentation.console.console_app --once --cliente 4
+    
+    # Procesar archivo específico
+    python -m src.presentation.console.console_app --file /path/to/solicitud.xlsx --cliente 4
 """
-from __future__ import annotations
 import argparse
 import logging
+import sys
+import io
 from pathlib import Path
-from typing import Dict, Any
+from typing import List, Dict
+import time
 
 from src.infrastructure.di.container import ApplicationContainer
-from src.infrastructure.config.settings import get_config
-from src.infrastructure.config.mapeos import ClienteMapeos
+from src.domain.value_objects.cliente_folder import ClienteFolder
+from src.application.processors.excel.excel_processor_factory import ExcelProcessorFactory
+
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+    format='%(asctime)s [%(levelname)s] %(name)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('logs/process_excel.log', encoding='utf-8')
+    ]
 )
-logger = logging.getLogger("console_app")
+logger = logging.getLogger(__name__)
 
-def _convertir_codigo_punto(codigo_bd: str) -> str:
-    """
-    Convierte un código de punto del formato de BD al formato de cliente.
-    
-    Ejemplos de conversión:
-        "52-SUC-0075" -> "45-0075"  (donde 52 es CC Code de cliente 45)
-        "52-0075"     -> "45-0075"
-        "01-SUC-1234" -> "46-1234"  (donde 01 es CC Code de cliente 46)
-        "45-0075"     -> "45-0075"  (ya está en formato correcto)
-    
-    Args:
-        codigo_bd: Código como viene de la base de datos
+class ExcelConsoleRunner:
+    """Runner de consola para procesamiento de Excel vía API"""
+
+    def __init__(self, container: ApplicationContainer):
+        self.container = container
+        self.config = container.config()
+        self.base_dir = self.config.paths.base_dir / 'data' / 'SOLICITUDES'
+
+        if not self.base_dir.exists():
+            logger.warning(f"Directorio SOLICITUDES no existe: {self.base_dir}")
+            logger.warning("Por favor crea la estructura de carpetas en data/SOLICITUDES/")
+
+    def run_once(self, cod_cliente: str | None = None) -> Dict[str, int]:
+        logger.info("=" * 60)
+        logger.info("AETHERCORE 4 - PROCESAMIENTO DE EXCEL (MODO ONCE)")
+        logger.info("=" * 60)
         
-    Returns:
-        Código en formato "CLIENTE-NUMERO"
-    """
-    if not codigo_bd or not isinstance(codigo_bd, str):
-        return ""
-    
-    cc_to_cliente = {v: k for k, v in ClienteMapeos.CLIENTE_TO_CC.items()}
-    codigo_normalizado = codigo_bd.replace("-SUC-", "-")
-    partes = codigo_normalizado.split('-', 1)
-    
-    if len(partes) == 2:
-        prefijo = partes[0]
-        numero = partes[1]
-        
-        if prefijo in cc_to_cliente:
-            codigo_cliente = cc_to_cliente[prefijo]
-            codigo_convertido = f"{codigo_cliente}-{numero}"
-            logger.debug(
-                "Código convertido: '%s' -> '%s' (CC %s -> Cliente %s)",
-                codigo_bd, codigo_convertido, prefijo, codigo_cliente
-            )
-            return codigo_convertido
-        
-        if prefijo in ClienteMapeos.CLIENTE_TO_CC:
-            logger.debug("Código '%s' ya está en formato de cliente", codigo_bd)
-            return codigo_normalizado
-        
-    logger.debug("No se pudo convertir código '%s', usando normalizado '%s'", codigo_bd, codigo_normalizado)
-    return codigo_normalizado
+        stats = {
+            'total_archivos': 0,
+            'procesados_exitosos': 0,
+            'procesados_fallidos': 0,
+            'clientes_procesados': 0
+        }
 
-def _build_puntos_info(container: ApplicationContainer) -> Dict[str, Dict[str, Any]]:
-    """
-    Construye diccionario de puntos con códigos en formato de cliente.
-    
-    El diccionario resultante tendrá:
-    - Claves: códigos de punto en formato "CLIENTE-NUMERO" (ej: "45-0075")
-    - Valores: dict con 'nombre_punto', 'nombre_cliente', 'ciudad'
-    
-    IMPORTANTE: Convierte automáticamente códigos de BD (con CC Code)
-                al formato de cliente que espera el procesador XML.
-    """
-    try:
-        puntos_repo = container.punto_repository()
+        carpetas_clientes = self._obtener_carpetas_clientes(cod_cliente)
 
-        for candidate in ("obtener_diccionario_info", "obtener_todos_como_diccionario", "get_puntos_info_dict"):
-            if hasattr(puntos_repo, candidate) and callable(getattr(puntos_repo, candidate)):
-                logger.info("Usando PuntoRepository.%s() para construir puntos_info", candidate)
-                raw_data = getattr(puntos_repo, candidate)()
-                converted_data = {}
-                for codigo_bd, info in raw_data.items():
-                    codigo_convertido = _convertir_codigo_punto(str(codigo_bd))
-                    converted_data[codigo_convertido] = info
+        if not carpetas_clientes:
+            logger.warning("No se encontraron carpetas de clientes válidas")
+            return stats
 
-                logger.info("Puntos cargados y convertidos: %d", len(converted_data))
-                return converted_data
+        for cliente_folder in carpetas_clientes:
+            archivos = self._obtener_archivos_pendientes(cliente_folder)
 
-        logger.info("PuntoRepository no expone método dict; usando consulta directa (fallback).")
-        conn = container.db_connection_read()
-
-        query = """
-            SELECT
-                p.cod_punto        AS codigo_punto,
-                p.nom_punto        AS nombre_punto,
-                c.cliente          AS nombre_cliente,
-                ciu.ciudad         AS ciudad
-            FROM adm_puntos AS p
-            LEFT JOIN adm_clientes AS c ON c.cod_cliente = p.cod_cliente
-            LEFT JOIN adm_ciudades AS ciu ON ciu.cod_ciudad = p.cod_ciudad
-        """
-        rows = conn.execute_query(query, [])
-        data: Dict[str, Dict[str, Any]] = {}
-        codigos_convertidos = 0
-        
-        for r in rows or []:
-            codigo_bd = str(r[0] or "").strip()
-            if not codigo_bd:
+            if not archivos:
                 continue
-            
-            codigo_convertido = _convertir_codigo_punto(codigo_bd)
-            if codigo_bd != codigo_convertido:
-                codigos_convertidos += 1
-            data[codigo_convertido] = {
-                "nombre_punto": r[1] or "",
-                "nombre_cliente": r[2] or "",
-                "ciudad": r[3] or "",
-            }
-            
-            if codigo_bd != codigo_convertido:
-                data[codigo_bd] = data[codigo_convertido]
-                
-        logger.info(
-            "Puntos cargados: %d únicos, %d convertidos (CC Code -> Cliente)",
-            len({_convertir_codigo_punto(k) for k in data.keys()}),
-            codigos_convertidos
-        )
-        logger.debug("Ejemplos de claves: %s", list(data.keys())[:5])
-        
-        return data
 
-    except Exception:
-        logger.exception("Error construyendo puntos_info")
-        return {}
+            stats['clientes_procesados'] += 1
+
+            for archivo in archivos:
+                stats['total_archivos'] += 1
+                if self._procesar_archivo(archivo, cliente_folder):
+                    stats['procesados_exitosos'] += 1
+                else:
+                    stats['procesados_fallidos'] += 1
+
+        self._imprimir_resumen(stats)
+        return stats
+
+    def run_watch(self, cod_cliente: str | None = None, interval: int = 10):
+        logger.info("=" * 60)
+        logger.info("AETHERCORE 4 - PROCESAMIENTO CONTINUO (MODO WATCH)")
+        logger.info(f"Intervalo: {interval} segundos")
+        logger.info("Presione Ctrl+C para detener")
+        logger.info("=" * 60)
+
+        carpetas_clientes = self._obtener_carpetas_clientes(cod_cliente)
+
+        if not carpetas_clientes:
+            logger.error("No hay carpetas de clientes para monitorear")
+            return
+
+        archivos_procesados = set()
+
+        try:
+            while True:
+                for cliente_folder in carpetas_clientes:
+                    archivos = self._obtener_archivos_pendientes(cliente_folder)
+                    archivos_nuevos = [a for a in archivos if a not in archivos_procesados]
+
+                    for archivo in archivos_nuevos:
+                        self._procesar_archivo(archivo, cliente_folder)
+                        archivos_procesados.add(archivo)
+
+                time.sleep(interval)
+
+        except KeyboardInterrupt:
+            logger.info("\nDeteniendo monitoreo. Proceso finalizado por el usuario.")
+
+    def run_file(self, ruta_archivo: Path, cod_cliente: str) -> bool:
+        logger.info("=" * 60)
+        logger.info(f"PROCESANDO ARCHIVO ESPECÍFICO: {ruta_archivo.name}")
+        logger.info("=" * 60)
+
+        if not ruta_archivo.exists():
+            logger.error(f"El archivo no existe: {ruta_archivo}")
+            return False
+
+        cliente_folder = ClienteFolder.from_folder_name(cod_cliente)
+        return self._procesar_archivo(ruta_archivo, cliente_folder)
+
+    def _obtener_carpetas_clientes(self, cod_cliente: str | None = None) -> List[ClienteFolder]:
+        carpetas = []
+        if not self.base_dir.exists(): return carpetas
+        
+        for item in self.base_dir.iterdir():
+            if not item.is_dir() or item.name.startswith('.') or item.name.startswith('_'):
+                continue
+            try:
+                cliente_folder = ClienteFolder.from_folder_name(item.name)
+                
+                if cod_cliente and str(cliente_folder.cod_cliente) != str(cod_cliente):
+                    continue
+
+                if str(cliente_folder.cod_cliente) not in self.config.clientes_permitidos:
+                    logger.debug(f"Se omite la carpeta {item.name} porque el cliente {cliente_folder.cod_cliente} no está en clientes_permitidos.")
+                    continue
+
+                carpetas.append(cliente_folder)
+            except Exception as e:
+                logger.error(f"Error procesando el nombre de la carpeta '{item.name}': {e}")
+                continue
+
+        return carpetas
+
+    def _obtener_archivos_pendientes(self, cliente_folder: ClienteFolder) -> List[Path]:
+        carpeta_cliente = cliente_folder.to_path(self.base_dir)
+        if not carpeta_cliente.exists(): return []
+
+        extensiones_validas = ['.xlsx', '.xls', '.xlsm']
+        archivos = []
+        
+        for item in carpeta_cliente.iterdir():
+            if item.is_file() and item.suffix.lower() in extensiones_validas and not item.name.startswith('~$'):
+                archivos.append(item)
+                
+        return sorted(archivos)
+
+    def _procesar_archivo(self, ruta_archivo: Path, cliente_folder: ClienteFolder) -> bool:
+        try:
+            excel_processor = self.container.excel_processor()
+            return excel_processor.procesar_archivo_excel(ruta_archivo, cliente_folder)
+        except Exception as e:
+            logger.error(f"Error procesando archivo {ruta_archivo.name}: {e}", exc_info=True)
+            return False
+
+    def _imprimir_resumen(self, stats: Dict[str, int]):
+        logger.info("\n" + "=" * 60)
+        logger.info("RESUMEN DE PROCESAMIENTO MODO ONCE")
+        logger.info("=" * 60)
+        logger.info(f"Total archivos procesados: {stats['total_archivos']}")
+        logger.info(f"Exitosos: {stats['procesados_exitosos']}")
+        logger.info(f"Fallidos: {stats['procesados_fallidos']}")
+        logger.info("=" * 60)
+
 
 def main():
-    """
-    Procesar todo una vez:
-    python -m src.presentation.console.console_app --once
-
-    Watcher de todo:
-    python -m src.presentation.console.console_app --watch
-
-    Solo XML:
-    --once --only xml ó --watch --only xml
-
-    Solo TXT:
-    --once --only txt ó --watch --only txt
-
-    Solo EXCEL:
-    --once --only excel ó --watch --only excel
-    """
-    parser = argparse.ArgumentParser(description="AetherCore Runner (auto XML/TXT/EXCEL)")
+    parser = argparse.ArgumentParser(description='AetherCore 4 API Client')
+    
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--once", action="store_true", help="Procesa TODO una sola vez (XML, TXT, etc.)")
-    mode.add_argument("--watch", action="store_true", help="Observa TODAS las carpetas y procesa nuevos archivos")
-
-    # Filtro opcional por tipo
-    parser.add_argument("--only", choices=["xml", "txt", "excel"], help="Procesa solo un tipo (xml|txt|excel)")
-
-    # Overrides opcionales
-    parser.add_argument("--in-xml", type=str, help="Override carpeta entrada XML")
-    parser.add_argument("--out-xml", type=str, help="Override carpeta salida XML")
-    parser.add_argument("--in-txt", type=str, help="Override carpeta entrada TXT")
-    parser.add_argument("--out-txt", type=str, help="Override carpeta salida TXT")
-
+    mode.add_argument('--once', action='store_true', help='Procesa todos los archivos pendientes una vez')
+    mode.add_argument('--watch', action='store_true', help='Monitorea carpetas')
+    mode.add_argument('--file', type=Path, help='Procesa un archivo específico')
+    
+    parser.add_argument('--cliente', type=str, help='Filtrar por código de cliente')
+    parser.add_argument('--interval', type=int, default=10, help='Intervalo en segundos')
+    
     args = parser.parse_args()
-
-    config = get_config()
+    
+    if args.file and not args.cliente:
+        parser.error("--file requiere usar también --cliente para saber qué formato aplicar")
+    
     container = ApplicationContainer()
-
-    # Overrides
-    if args.in_xml:
-        config.paths.carpeta_entrada_xml = Path(args.in_xml)
-    if args.out_xml:
-        config.paths.carpeta_salida_xml = Path(args.out_xml)
-    if args.in_txt:
-        config.paths.carpeta_entrada_txt = Path(args.in_txt)
-    if args.out_txt:
-        config.paths.carpeta_salida_txt = Path(args.out_txt)
-
-    puntos_info = _build_puntos_info(container)
     
-    logger.info("=== DEBUG puntos_info ===")
-    logger.info("Total de puntos cargados: %d", len(puntos_info))
-    if puntos_info:
-        logger.info("Primeras 5 claves: %s", list(puntos_info.keys())[:5])
-    logger.info("========================")
-    
-    orchestrator = container.xml_orchestrator()
-    conexion_activa = container.db_connection_read()
-
     try:
+        runner = ExcelConsoleRunner(container)
+        
         if args.once:
-            logger.info("Ejecutando en modo --once (auto: todos los tipos)")
-            orchestrator.run_once_all(puntos_info, conexion_activa, only=args.only)
-        else:
-            logger.info("Ejecutando en modo --watch (auto: todos los tipos) — Ctrl+C para salir")
-            orchestrator.run_watch_all(puntos_info, conexion_activa, only=args.only)
-    finally:
-        try:
-            container.close_all_connections()
-            logger.info("Conexiones cerradas correctamente")
-        except Exception:
-            logger.exception("Error cerrando conexión")
+            stats = runner.run_once(cod_cliente=args.cliente)
+            return 0 if stats['procesados_fallidos'] == 0 else 1
+            
+        elif args.watch:
+            runner.run_watch(cod_cliente=args.cliente, interval=args.interval)
+            return 0
+            
+        elif args.file:
+            return 0 if runner.run_file(args.file, args.cliente) else 1
+            
+    except Exception as e:
+        logger.error(f"Error crítico en la aplicación: {e}")
+        return 1
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

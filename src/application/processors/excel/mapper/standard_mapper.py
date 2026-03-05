@@ -30,7 +30,7 @@ class StandardExcelMapper(BaseExcelMapper):
         'OBSERVACION': None
     }
 
-    DEFAULT_USER_ID = "e5926e18-33b1-468c-a979-e4e839a86f30"
+    DEFAULT_USER_ID = "dda6d2ea-0a02-4f77-a063-04d940572a1a"
 
     def __init__(self, cod_cliente: str):
         self._cod_cliente = cod_cliente

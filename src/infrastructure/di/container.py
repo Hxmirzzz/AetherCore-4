@@ -71,8 +71,7 @@ class ApplicationContainer:
         return ExcelProcessor(
             reader=self.excel_file_reader(),
             api_service=self.api_service(),
-            base_solicitudes_dir=base_dir,
-            styler=self.excel_styler()
+            base_solicitudes_dir=base_dir
         )
         
     # ====== FILE SYSTEM ======

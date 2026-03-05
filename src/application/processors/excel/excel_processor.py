@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 from datetime import datetime
+import openpyxl
 
 from src.application.processors.excel.excel_file_reader import ExcelFileReader
 from src.application.processors.excel.excel_processor_factory import ExcelProcessorFactory
@@ -76,45 +77,16 @@ class ExcelProcessor:
 
                 datos_hoja = mapper.mapear_a_dtos(df, f"{ruta_excel.name} [{nombre_hoja}]")
             
-                for s_old, t_old, idx_fila in datos_hoja:
-                    punto = CodigoPunto.from_raw(str(s_old.cod_punto_origen)).parte_numerica.strip()
+                for dto, idx_fila in datos_hoja:
+                    punto = dto.cod_punto_origen if dto.cod_punto_origen != "FONDO" else dto.cod_punto_destino
+                    punto_limpio = CodigoPunto.from_raw(str(punto)).parte_numerica.strip() 
 
-                    dto = AetherServiceImportDto(
-                        # --- Datos del Servicio ---
-                        numero_pedido=s_old.numero_pedido,
-                        cod_os_cliente=s_old.cod_os_cliente,
-                        cod_cliente=s_old.cod_cliente,
-                        cod_sucursal=s_old.cod_sucursal,
-                        fecha_solicitud=str(s_old.fecha_solicitud),
-                        hora_solicitud=str(s_old.hora_solicitud),
-                        cod_concepto=s_old.cod_concepto,
-                        tipo_traslado=s_old.tipo_traslado,
-                        modalidad_servicio=s_old.modalidad_servicio,
-                        observaciones=s_old.observaciones,
-                        cod_punto_origen=punto,
-                        indicador_tipo_origen=s_old.indicador_tipo_origen,
-                        cod_punto_destino="",
-                        indicador_tipo_destino=s_old.indicador_tipo_destino,
-                        valor_billete=s_old.valor_billete,
-                        valor_moneda=s_old.valor_moneda,
-                        numero_kits_cambio=s_old.numero_kits_cambio,
-                        # --- Datos de Transacción ---
-                        cef_numero_planilla=t_old.numero_planilla,
-                        cantidad_bolsas_declaradas=t_old.cantidad_bolsas_declaradas,
-                        cantidad_sobres_declarados=t_old.cantidad_sobres_declarados,
-                        cantidad_cheques_declarados=t_old.cantidad_cheques_declarados,
-                        cantidad_documentos_declarados=t_old.cantidad_documentos_declarados,
-                        valor_billetes_declarado=t_old.valor_billetes_declarado,
-                        valor_monedas_declarado=t_old.valor_monedas_declarado,
-                        valor_total_declarado=t_old.valor_total_declarado,
-                        valor_total_declarado_letras=t_old.valor_total_declarado_letras,
-                        cef_es_custodia=t_old.es_custodia,
-                        cef_es_punto_a_punto=t_old.es_punto_a_punto
-                    )
+                    dto.cod_punto_origen = punto_limpio
+                    dto.cod_punto_destino = ""
 
                     dtos_a_enviar.append(dto)
                     key = len(dtos_a_enviar) - 1
-                    mapeo_filas_origen[key] = (nombre_archivo, idx_fila, s_old.numero_pedido)
+                    mapeo_filas_origen[key] = (nombre_hoja, idx_fila, dto.numero_pedido)
                 
             if not dtos_a_enviar:
                 self._manejar_excel_fallido(ruta_excel, cliente_folder, "No se encontraron registros válidos en el archivo")

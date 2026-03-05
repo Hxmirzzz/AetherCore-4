@@ -15,8 +15,6 @@ class EmergencyMapper(BaseExcelMapper):
     Mapper para archivos Excel de emergencia.
     """
 
-    DEFAULT_USER_ID = "e5926e18-33b1-468c-a979-e4e839a86f30"
-
     def __init__(self, cod_cliente: str):
         self._cod_cliente = cod_cliente
         self.col_pedido = None
@@ -87,6 +85,8 @@ class EmergencyMapper(BaseExcelMapper):
                     cod_sucursal=1,
                     fecha_solicitud=str(now.date()),
                     hora_solicitud=now.strftime("%H:%M:%S"),
+                    fecha_programacion=str(fecha_serv),
+                    hora_programacion="00:00:00",
                     cod_concepto=2,
                     cod_punto_origen=codigo, 
                     cod_punto_destino="",
@@ -100,7 +100,8 @@ class EmergencyMapper(BaseExcelMapper):
                     cef_numero_planilla=0,
                     valor_total_declarado=valor_servicio,
                     cef_divisa="COP",
-                    cef_tipo_transaccion="PV"
+                    cef_tipo_transaccion="PV",
+                    cef_estado_transaccion="ProvisionEnProceso"
                 )
 
                 dtos.append((dto, idx))
@@ -181,19 +182,27 @@ class EmergencyMapper(BaseExcelMapper):
             return 0
 
     def _parsear_fecha(self, val) -> date:
-        if pd.isna(val) : return date.today()
+        if pd.isna(val) or not str(val).strip() : return date.today()
 
         if isinstance(val, (datetime, pd.Timestamp)):
             return val.date()
-        try:
-            val_str = str(val).split()[0]
-            if '-' in val_str:
-                return datetime.strptime(val_str, '%Y-%m-%d').date()
-            if '/' in val_str:
-                return datetime.strptime(val_str, '%d/%m/%Y').date()
-        except:
-            pass
+
+        val_str = str(val).split()[0].strip()
+
+        formatos = [ 
+            '%Y-%m-%d', # 2026-03-28
+            '%d-%m-%Y', # 28-03-2026
+            '%d/%m/%Y', # 28/03/2026
+            '%Y/%m/%d'  # 2026/03/28
+        ]
+
+        for fmt in formatos:
+            try:
+                return datetime.strptime(val_str, fmt).date()
+            except ValueError:
+                continue
         
+        logger.warning(f"⚠️ No se pudo entender el formato de fecha '{val_str}'. Usando la de hoy.")
         return date.today()
         
         

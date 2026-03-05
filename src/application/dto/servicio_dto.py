@@ -16,6 +16,8 @@ class AetherServiceImportDto:
     cod_sucursal: int
     fecha_solicitud: str
     hora_solicitud: str
+    fecha_programacion: str
+    hora_programacion: str
     cod_concepto: int
     cod_punto_origen: str
     cod_punto_destino: str
@@ -38,6 +40,7 @@ class AetherServiceImportDto:
     cef_cod_ruta: Optional[str] = None
     cef_numero_planilla: int = 0
     cef_divisa: str = "COP"
+    cef_estado_transaccion: str = "ProvisionEnProceso"
     cef_tipo_transaccion: str = "Checkin"
     
     cantidad_bolsas_declaradas: int = 0
@@ -62,6 +65,8 @@ class AetherServiceImportDto:
             "CodSucursal": self.cod_sucursal,
             "FechaSolicitud": self.fecha_solicitud,
             "HoraSolicitud": self.hora_solicitud,
+            "FechaProgramacion": self.fecha_programacion,
+            "HoraProgramacion": self.hora_programacion,
             "CodConcepto": self.cod_concepto,
             "TipoTraslado": self.tipo_traslado,
             "CodPuntoOrigen": self.cod_punto_origen,
@@ -79,6 +84,7 @@ class AetherServiceImportDto:
             "CefNumeroPlanilla": self.cef_numero_planilla,
             "CefDivisa": self.cef_divisa,
             "CefTipoTransaccion": self.cef_tipo_transaccion,
+            "CefEstadoTransaccion": self.cef_estado_transaccion,
             "CantidadBolsasDeclaradas": self.cantidad_bolsas_declaradas,
             "CantidadSobresDeclarados": self.cantidad_sobres_declarados,
             "CantidadChequesDeclarados": self.cantidad_cheques_declarados,
