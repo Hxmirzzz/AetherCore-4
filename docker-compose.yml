@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  # Tu primer servicio
+  aether_procesador_4:
+    build: .
+    container_name: aether_core_4
+    restart: always # Si la app crashea o la PC se reinicia, Docker lo vuelve a prender solo
+    volumes:
+      # EL PUENTE: Carpeta_en_Windows : Carpeta_en_Docker
+      # Ajusta esto para que apunte a donde el usuario suelta los Excels
+      - C:\AetherCore\InputExcel:/app/InputExcel 
+      # Si la app genera logs en archivos, sácalos también para verlos fácil
+      - C:\AetherCore\Logs:/app/Logs
+    environment:
+      # Puedes pasar variables de entorno aquí en lugar del .env
+      - ENVIRONMENT=production
+
+  # Si tienes un segundo servicio corriendo un script distinto, lo agregas así:
+  # aether_procesador_2:
+  #   build: .
+  #   container_name: aether_core_2
+  #   restart: always
+  #   command: python src/otro_script_orquestador.py
+  #   volumes:
+  #     - C:\AetherCore\InputExcel2:/app/InputExcel2

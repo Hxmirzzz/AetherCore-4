@@ -3,9 +3,7 @@ app:
   version: "4.0.0"
 
 storage:
-  input_path: "data/input"
-  processed_path: "data/processed"
-  failed_path: "data/failed"
+  input_folder: "solicitudes"
   logs_path: "logs"
 
 api:

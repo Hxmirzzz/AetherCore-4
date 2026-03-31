@@ -25,7 +25,7 @@ class PathConfig(BaseSettings):
     """
     Configuración de rutas/carpetas de la aplicación.
     """
-    base_dir: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[3])
+    base_dir: Path = Field(default=Path("C:/AetherCore"), alias='BASE_DIR')
     logs_dir: Path | None = None
 
     model_config = SettingsConfigDict(

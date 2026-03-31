@@ -1,44 +1,37 @@
-"""
-Gestión central de rutas para XML/TXT (solo path building).
-Mantiene nombres y convenciones iguales a Config.
-"""
-from __future__ import annotations
 from pathlib import Path
 from src.infrastructure.config.settings import get_config
 
-Config = get_config()
-
 class PathManager:
-    @property
-    def base_dir(self) -> Path:
-        """Devuelve al directorio raiz configurado"""
-        return Path(Config.paths.base_dir)
+    def __init__(self):
+        self.config = get_config()
+        self.base_dir = Path(self.config.paths.base_dir)
+    
+    def get_solicitudes_dir(self) -> Path:
+        """Retorna C:\AetherCore\solicitudes"""
+        return self.base_dir / "solicitudes"
 
-    # --- XML ---
-    def input_xml_dir(self) -> Path:
-        return Path(Config.paths.carpeta_entrada_xml)
+    def get_client_folder(self, client_name: str) -> Path:
+        """Retorna C:\AetherCore\solicitudes\{cliente}"""
+        return self.get_solicitudes_dir() / client_name
 
-    def output_xml_dir(self) -> Path:
-        return Path(Config.paths.carpeta_salida_xml)
+    def get_request_folder(self, client_name: str, request_name: str) -> Path:
+        """Retorna C:\AetherCore\solicitudes\{cliente}\{solicitud}"""
+        return self.get_client_folder(client_name) / request_name
 
-    def errores_xml_dir(self) -> Path:
-        return Path(Config.paths.carpeta_errores_xml)
+    def get_gestionado_path(self, client_name: str, request_name: str) -> Path:
+        return self.get_request_folder(client_name, request_name) / "gestionado"
+        
+    def get_errores_path(self, client_name: str, request_name: str) -> Path:
+        return self.get_request_folder(client_name, request_name) / "errores"
+        
+    def get_novedades_path(self, client_name: str, request_name: str) -> Path:
+        return self.get_request_folder(client_name, request_name) / "novedades"
 
-    def gestionados_xml_dir(self) -> Path:
-        return Path(Config.paths.carpeta_gestionados_xml)
-
-    def build_output_excel_path(self, ruta_xml: Path) -> Path:
-        name_wo_ext = ruta_xml.name[:-4] if ruta_xml.name.lower().endswith(".xml") else ruta_xml.stem
-        return self.output_xml_dir() / f"{name_wo_ext}.xlsx"
-
-    # --- TXT (por si luego lo usamos) ---
-    def input_txt_dir(self) -> Path:
-        return Config.paths.carpeta_entrada_txt
-    def output_txt_dir(self) -> Path:
-        return Config.paths.carpeta_salida_txt
-    def respuestas_txt_dir(self) -> Path:
-        return Config.paths.carpeta_respuesta_txt
-    def gestionados_txt_dir(self) -> Path:
-        return Config.paths.carpeta_gestionados_txt
-    def errores_txt_dir(self) -> Path:
-        return (Config.paths.carpeta_errores_txt)
+    def create_request_structure(self, client_name: str, request_name: str):
+        """
+        Llama a este método justo antes de procesar un Excel.
+        Se encargará de crear toda la ruta de carpetas en Windows si no existían.
+        """
+        self.get_gestionado_path(client_name, request_name).mkdir(parents=True, exist_ok=True)
+        self.get_errores_path(client_name, request_name).mkdir(parents=True, exist_ok=True)
+        self.get_novedades_path(client_name, request_name).mkdir(parents=True, exist_ok=True)

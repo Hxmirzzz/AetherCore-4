@@ -4,9 +4,7 @@ app:
 
 # Configuración de carpetas
 storage:
-  input_path: "data/input"
-  processed_path: "data/processed"
-  failed_path: "data/failed"
+  input_folder: "requests"
   logs_path: "logs"
 
 # Configuración de la API
