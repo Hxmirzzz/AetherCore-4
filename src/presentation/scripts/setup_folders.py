@@ -21,6 +21,7 @@ from datetime import datetime
 from src.infrastructure.di.container import ApplicationContainer
 from src.domain.value_objects.cliente_folder import ClienteFolder
 from src.infrastructure.config.settings import get_config
+from src.infrastructure.file_system.path_manager import PathManager
 
 if sys.platform == 'win32':
     import io
@@ -32,7 +33,7 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler('setup_folders.log', encoding='utf-8')
+        logging.FileHandler('logs/setup_folders.log', encoding='utf-8')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -43,9 +44,6 @@ class FolderSetup:
     def __init__(self, base_dir: Path):
         """
         Inicializa el setup.
-        
-        Args:
-            base_dir: Directorio base (ej: data/SOLICITUDES)
         """
         self.base_dir = base_dir
         self.mapping_file = base_dir / "clientes_mapping.json"
@@ -128,12 +126,9 @@ class FolderSetup:
         )
 
         cliente_path = cliente_folder.to_path(self.base_dir)
-        gestionados_path = cliente_folder.gestionados_path(self.base_dir)
-
         ya_existia = cliente_path.exists()
 
-        cliente_path.mkdir(exist_ok=True)
-        gestionados_path.mkdir(exist_ok=True)
+        cliente_path.mkdir(parents=True, exist_ok=True)
 
         readme_path = cliente_path / "README.txt"
         if not readme_path.exists():
@@ -199,32 +194,16 @@ class FolderSetup:
 
 def main():
     """Función principal"""
-    parser = argparse.ArgumentParser(
-        description='Setup de carpetas de clientes para procesamiento de Excel'
-    )
-    parser.add_argument(
-        '--base-dir',
-        type=Path,
-        help='Directorio base (default: data/SOLICITUDES)'
-    )
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Solo simula, no crea carpetas'
-    )
+    parser = argparse.ArgumentParser(description='Setup de carpetas de clientes para procesamiento de Excel')
+    parser.add_argument('--dry-run', action='store_true', help='Solo simula, no crea carpetas')
 
     args = parser.parse_args()
 
+    path_manager = PathManager()
+    base_dir = path_manager.get_solicitudes_dir()
     config = get_config()
-
-    if args.base_dir:
-        base_dir = args.base_dir
-    else:
-        base_dir = config.paths.base_dir / 'data' / 'SOLICITUDES'
-
+    
     logger.info(f"Directorio base: {base_dir}")
-
-    container = ApplicationContainer()
 
     try:
         logger.info("Consultando clientes en base de datos...")

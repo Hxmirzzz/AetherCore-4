@@ -1,10 +1,8 @@
 import logging
+import shutil
 from pathlib import Path
 from src.domain.value_objects.cliente_folder import ClienteFolder
 from src.infrastructure.file_system.path_manager import PathManager
-from typing import Optional, Any
-import threading
-import time
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +21,7 @@ class ProcessingOrchestrator:
 
     def start(self):
         """Inicia el monitoreo de la carpeta de entrada configurada."""
-        input_path = self.path_manager.get_input_path()
+        input_path = self.path_manager.get_solicitudes_dir()
         logger.info(f"🚀 AetherCore 4 iniciado. Monitoreando: {input_path}")
 
         watcher = self.watcher_factory(
@@ -34,17 +32,16 @@ class ProcessingOrchestrator:
         watcher.start()
 
     def on_file_detected(self, file_path: str):
-        """
-        Evento disparado cuando se detecta un nuevo archivo Excel.
-        """
         ruta = Path(file_path)
         logger.info(f"📂 Archivo detectado: {ruta.name}")
 
         try:
-            folder_name = ruta.parent.name
-            cliente_folder = ClienteFolder.from_folder_name(folder_name)
+            solicitud_name = ruta.parent.name
+            cliente_name = ruta.parent.parent.name
+            
+            cliente_folder = ClienteFolder.from_folder_name(cliente_name)
 
-            exito = self.excel_processor.procesar_archivo_excel(ruta, cliente_folder)
+            exito = self.excel_processor.procesar_archivo_excel(ruta, cliente_folder, solicitud_name)
             if exito:
                 logger.info(f"✅ Procesamiento exitoso: {ruta.name}")
             else:
@@ -55,9 +52,8 @@ class ProcessingOrchestrator:
             self._mover_a_emergencia(ruta)
 
     def _mover_a_emergencia(self, ruta: Path):
-        """Mueve el archivo a una carpeta de error genérica si falla la lógica inicial."""
         try:
-            error_dir = ruta.parent / "ERRORES_SISTEMA"
+            error_dir = ruta.parent / "errores"
             error_dir.mkdir(parents=True, exist_ok=True)
             shutil.move(str(ruta), str(error_dir / ruta.name))
         except:

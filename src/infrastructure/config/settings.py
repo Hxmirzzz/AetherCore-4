@@ -38,7 +38,7 @@ class PathConfig(BaseSettings):
         super().__init__(**data)
         if self.logs_dir is None:
             logs_path = self.base_dir / 'logs'
-            logs_path.mkdir(exist_ok=True)
+            logs_path.mkdir(parents=True, exist_ok=True)
             object.__setattr__(self, 'logs_dir', logs_path)
 
     @property

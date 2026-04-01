@@ -24,7 +24,7 @@ import time
 
 from src.infrastructure.di.container import ApplicationContainer
 from src.domain.value_objects.cliente_folder import ClienteFolder
-from src.application.processors.excel.excel_processor_factory import ExcelProcessorFactory
+from src.infrastructure.file_system.path_manager import PathManager
 
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -46,11 +46,13 @@ class ExcelConsoleRunner:
     def __init__(self, container: ApplicationContainer):
         self.container = container
         self.config = container.config()
-        self.base_dir = self.config.paths.base_dir / 'data' / 'SOLICITUDES'
+        self.path_manager = PathManager(self.config)
+        self.base_dir = self.path_manager.get_solicitudes_dir()
 
         if not self.base_dir.exists():
-            logger.warning(f"Directorio SOLICITUDES no existe: {self.base_dir}")
-            logger.warning("Por favor crea la estructura de carpetas en data/SOLICITUDES/")
+            logger.warning(f"Directorio solicitudes no existe: {self.base_dir}")
+            self.base_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("Directorio creado exitosamente")
 
     def run_once(self, cod_cliente: str | None = None) -> Dict[str, int]:
         logger.info("=" * 60)

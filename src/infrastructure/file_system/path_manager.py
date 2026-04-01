@@ -7,24 +7,27 @@ class PathManager:
         self.base_dir = Path(self.config.paths.base_dir)
     
     def get_solicitudes_dir(self) -> Path:
-        """Retorna C:\AetherCore\solicitudes"""
+        r"""Retorna C:\AetherCore\solicitudes"""
         return self.base_dir / "solicitudes"
 
     def get_client_folder(self, client_name: str) -> Path:
-        """Retorna C:\AetherCore\solicitudes\{cliente}"""
+        r"""Retorna C:\AetherCore\solicitudes\{cliente}"""
         return self.get_solicitudes_dir() / client_name
 
     def get_request_folder(self, client_name: str, request_name: str) -> Path:
-        """Retorna C:\AetherCore\solicitudes\{cliente}\{solicitud}"""
+        r"""Retorna C:\AetherCore\solicitudes\{cliente}\{solicitud}"""
         return self.get_client_folder(client_name) / request_name
 
     def get_gestionado_path(self, client_name: str, request_name: str) -> Path:
+        r"""Retorna C:\AetherCore\solicitudes\{cliente}\{solicitud}\gestionado"""
         return self.get_request_folder(client_name, request_name) / "gestionado"
         
     def get_errores_path(self, client_name: str, request_name: str) -> Path:
+        r"""Retorna C:\AetherCore\solicitudes\{cliente}\{solicitud}\errores"""
         return self.get_request_folder(client_name, request_name) / "errores"
         
     def get_novedades_path(self, client_name: str, request_name: str) -> Path:
+        r"""Retorna C:\AetherCore\solicitudes\{cliente}\{solicitud}\novedades"""
         return self.get_request_folder(client_name, request_name) / "novedades"
 
     def create_request_structure(self, client_name: str, request_name: str):

@@ -21,13 +21,17 @@ class DirectoryWatcher:
     def _scan_once(self):
         if not self._dir.exists():
             self._dir.mkdir(parents=True, exist_ok=True)
-        for p in self._dir.iterdir():
+            
+        for p in self._dir.rglob('*.xlsx'):
             if not p.is_file():
                 continue
+
+            if any(folder in p.parts for folder in ['gestionado', 'errores', 'novedades']):
+                continue
+                
             name = p.name
             if name not in self._seen:
                 self._seen.add(name)
-                # No llamamos inmediatamente el callback; el orquestador aplica el sleep (debounce) previo al procesado.
                 self._on_new_file(p)
 
     def start(self):
@@ -37,7 +41,6 @@ class DirectoryWatcher:
                     self._scan_once()
                     time.sleep(self._interval_sec)
                 except Exception:
-                    # Evitar que caiga el hilo por excepciones del callback
                     time.sleep(self._interval_sec)
         t = threading.Thread(target=_loop, daemon=True)
         t.start()

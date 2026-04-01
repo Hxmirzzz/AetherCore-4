@@ -6,10 +6,10 @@ import shutil
 from datetime import datetime
 import openpyxl
 
+from src.infrastructure.file_system.path_manager import PathManager
 from src.application.processors.excel.excel_file_reader import ExcelFileReader
 from src.application.processors.excel.excel_processor_factory import ExcelProcessorFactory
 from src.application.services.api_service import ApiService
-from src.application.dto.servicio_dto import AetherServiceImportDto
 from src.domain.value_objects.cliente_folder import ClienteFolder
 from src.domain.value_objects.codigo_punto import CodigoPunto
 
@@ -24,19 +24,20 @@ class ExcelProcessor:
         self,
         reader: ExcelFileReader | None = None,
         api_service: ApiService | None = None,
-        base_solicitudes_dir: Path | None = None
+        path_manager: PathManager | None = None
     ):
         """
         Inicializa el procesador.
         """
         self._reader = reader or ExcelFileReader()
         self._api_service = api_service
-        self._base_dir = base_solicitudes_dir or Path("data/SOLICITUDES")
+        self._path_manager = path_manager or PathManager()
 
     def procesar_archivo_excel(
         self,
         ruta_excel: Path,
-        cliente_folder: ClienteFolder
+        cliente_folder: ClienteFolder,
+        solicitud_name: str
     ) -> bool:
         """
         Procesa un archivo Excel de solicitudes.
@@ -49,17 +50,21 @@ class ExcelProcessor:
             True si procesó exitosamente, False en caso contrario
         """
         try:
-            logger.info(f"== Procesando: {ruta_excel.name} para Cliente: {cliente_folder} ==")
+            cliente_name = cliente_folder.cod_cliente
+
+            self._path_manager.create_request_structure(cliente_name, solicitud_name)
+
+            logger.info(f"== Procesando: {ruta_excel.name} para Cliente: {cliente_name} ==")
         
             info = self._reader.read_multiple_sheets(ruta_excel)
             if not info:
-                self._manejar_excel_fallido(ruta_excel, cliente_folder, "Archivo vacío o ilegible")
+                self._manejar_excel_fallido(ruta_excel, cliente_name, solicitud_name, "Archivo vacío o ilegible")
                 return False
             
             try:
                 mapper = ExcelProcessorFactory.get_mapper(cliente_folder.cod_cliente)
             except ValueError as e:
-                self._manejar_excel_fallido(ruta_excel, cliente_folder, str(e))
+                self._manejar_excel_fallido(ruta_excel, cliente_name, solicitud_name, str(e))
                 return False
 
             nombre_hoja_params = next((k for k in info.keys() if "PARAMETRO" in k.upper()), None)
@@ -89,24 +94,24 @@ class ExcelProcessor:
                     mapeo_filas_origen[key] = (nombre_hoja, idx_fila, dto.numero_pedido)
                 
             if not dtos_a_enviar:
-                self._manejar_excel_fallido(ruta_excel, cliente_folder, "No se encontraron registros válidos en el archivo")
+                self._manejar_excel_fallido(ruta_excel, cliente_name, solicitud_name, "No se encontraron registros válidos en el archivo")
                 return False
 
             logger.info(f"🚀 Enviando {len(dtos_a_enviar)} servicios a VCashApp vía API...")
             respuesta = self._api_service.upload_services(dtos_a_enviar)
 
             if respuesta:
-                return self._gestionar_finalizacion(ruta_excel, cliente_folder, respuesta, mapeo_filas_origen)
+                return self._gestionar_finalizacion(ruta_excel, cliente_name, solicitud_name, respuesta, mapeo_filas_origen)
             else:
-                self._manejar_excel_fallido(ruta_excel, cliente_folder, "Error al enviar servicios a VCashApp")
+                self._manejar_excel_fallido(ruta_excel, cliente_name, solicitud_name, "Error al enviar servicios a VCashApp")
                 return False
             
         except Exception as e:
             logger.exception(f"❌ Error crítico: {e}")
-            self._manejar_excel_fallido(ruta_excel, cliente_folder, str(e))
+            self._manejar_excel_fallido(ruta_excel, cliente_name, solicitud_name, str(e))
             return False
 
-    def _gestionar_finalizacion(self, ruta_excel: Path, cliente_folder: ClienteFolder, respuesta: dict, mapeo: dict) -> bool:
+    def _gestionar_finalizacion(self, ruta_excel: Path, cliente_name: str, solicitud_name: str, respuesta: dict, mapeo: dict) -> bool:
         """
         Gestiona la finalización del procesamiento del archivo Excel.
         """
@@ -132,7 +137,7 @@ class ExcelProcessor:
         nombre_base = ruta_excel.stem.replace('_NOVEDADES', '').replace('_OK', '').split('_202')[0]
 
         if total_exitosos > 0:
-            gestionados_dir =  cliente_folder.gestionados_path(self._base_dir)
+            gestionados_dir =  self._path_manager.get_gestionado_path(cliente_name, solicitud_name)
             gestionados_dir.mkdir(parents=True, exist_ok=True)
             ruta_ok = gestionados_dir / f"{nombre_base}_OK_{timestamp}{ruta_excel.suffix}"
 
@@ -144,7 +149,7 @@ class ExcelProcessor:
                 logger.info(f"📁 Copia de exitosos guardada en GESTIONADOS")
 
         if total_fallidos > 0:
-            novedades_dir = cliente_folder.to_path(self._base_dir) / "NOVEDADES"
+            novedades_dir = self._path_manager.get_novedades_path(cliente_name, solicitud_name)
             novedades_dir.mkdir(parents=True, exist_ok=True)
             ruta_novedades = novedades_dir / f"{nombre_base}_NOVEDADES_{timestamp}{ruta_excel.suffix}"
             self._generar_copia_filtrada(ruta_excel, ruta_novedades, fallidos_indices, borrar_hojas_vacias=True)
@@ -231,30 +236,13 @@ class ExcelProcessor:
 
                 ws.row_dimensions[r].hidden = True
 
-    def _mover_a_gestionados(self, ruta_excel, cliente_folder):
-        """
-        Mueve el archivo Excel a la carpeta GESTIONADOS.
-        """
-        try:
-            gestionados_dir = cliente_folder.gestionados_path(self._base_dir)
-            gestionados_dir.mkdir(parents=True, exist_ok=True)
-            
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            nombre_nuevo = f"{ruta_excel.stem}_{timestamp}{ruta_excel.suffix}"
-            destino = gestionados_dir / nombre_nuevo
-            
-            os.rename(ruta_excel, destino)
-            logger.info(f"Archivo movido a: {destino.name}")
-        except Exception as e:
-            logger.warning(f"No se pudo mover archivo: {e}")
-
-    def _manejar_excel_fallido(self, ruta_excel, cliente_folder, razon_error):
+    def _manejar_excel_fallido(self, ruta_excel: Path, cliente_name: str, solicitud_name: str, razon_error: str):
         """
         Maneja archivos Excel que fallaron en el procesamiento.
         """
         logger.error(f"   Razón: {razon_error}")
         try:
-            errores_dir = cliente_folder.to_path(self._base_dir) / "ERRORES"
+            errores_dir = self._path_manager.get_errores_path(cliente_name, solicitud_name)
             errores_dir.mkdir(exist_ok=True)
 
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
