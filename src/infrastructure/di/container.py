@@ -65,13 +65,10 @@ class ApplicationContainer:
         """
         Factory para el procesador de Excel.
         """
-        conf = self.config()
-        base_dir = conf.paths.base_dir / 'data' / 'SOLICITUDES'
-        
         return ExcelProcessor(
             reader=self.excel_file_reader(),
             api_service=self.api_service(),
-            base_solicitudes_dir=base_dir
+            path_manager=self.path_manager()
         )
         
     # ====== FILE SYSTEM ======

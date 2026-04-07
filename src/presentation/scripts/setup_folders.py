@@ -201,21 +201,23 @@ def main():
 
     path_manager = PathManager()
     base_dir = path_manager.get_solicitudes_dir()
-    config = get_config()
     
     logger.info(f"Directorio base: {base_dir}")
 
+    container = ApplicationContainer()
+
     try:
         logger.info("Consultando clientes en base de datos...")
-        cliente_repo = container.cliente_repository()
-        clientes_dict = cliente_repo.obtener_todos()
+
+        api_service = container.api_service()
+        clientes_api = api_service.get_clients()
 
         clientes = [
             {
-                'cod_cliente': cod,
-                'nombre_cliente': info['cliente']
+                'cod_cliente': str(c['codCliente']),
+                'nombre_cliente': c['nombreCliente']
             }
-            for cod, info in clientes_dict.items()
+            for c in clientes_api
         ]
 
         logger.info(f"Se encontraron {len(clientes)} clientes")
@@ -224,19 +226,16 @@ def main():
             logger.warning("No se encontraron clientes en la BD")
             return 1
 
-        # Mostrar lista
         logger.info("\nClientes a procesar:")
         for c in clientes:
             logger.info(f"  - {c['cod_cliente']}: {c['nombre_cliente']}")
         
-        # Confirmación
         if not args.dry_run:
             respuesta = input("\n¿Continuar con la creación? (si/no): ").strip().lower()
             if respuesta != 'si':
                 logger.info("Operación cancelada")
                 return 0
         
-        # Ejecutar setup
         if args.dry_run:
             logger.info("\n[DRY RUN] No se crearán carpetas reales\n")
             return 0
@@ -244,7 +243,6 @@ def main():
         setup = FolderSetup(base_dir)
         stats = setup.setup_all(clientes)
         
-        # Verificar errores
         if stats['errores']:
             logger.error("\n⚠️  Hubo errores durante el setup:")
             for error in stats['errores']:
@@ -257,8 +255,6 @@ def main():
     except Exception as e:
         logger.error(f"❌ Error crítico: {e}", exc_info=True)
         return 1
-    finally:
-        container.close_all_connections()
 
 if __name__ == "__main__":
     sys.exit(main())

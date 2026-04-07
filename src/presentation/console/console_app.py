@@ -46,7 +46,7 @@ class ExcelConsoleRunner:
     def __init__(self, container: ApplicationContainer):
         self.container = container
         self.config = container.config()
-        self.path_manager = PathManager(self.config)
+        self.path_manager = PathManager()
         self.base_dir = self.path_manager.get_solicitudes_dir()
 
         if not self.base_dir.exists():
@@ -157,7 +157,7 @@ class ExcelConsoleRunner:
         return carpetas
 
     def _obtener_archivos_pendientes(self, cliente_folder: ClienteFolder) -> List[Path]:
-        carpeta_cliente = cliente_folder.to_path(self.base_dir)
+        carpeta_cliente = self.path_manager.get_client_folder(cliente_folder.folder_name)
         if not carpeta_cliente.exists(): return []
 
         extensiones_validas = ['.xlsx', '.xls', '.xlsm']

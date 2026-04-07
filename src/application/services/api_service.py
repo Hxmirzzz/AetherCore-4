@@ -89,3 +89,34 @@ class ApiService:
         except Exception as e:
             self.logger.error(f"Error al subir servicios: {e}")
             return None
+
+    def get_clients(self) -> list:
+        """
+        Consulta la API de VCash para obtener los clientes autorizados de AetherCore.
+        """
+        if not self.is_authenticated:
+            if not self.login():
+                raise Exception("No se pudo iniciar sesión en la API para obtener clientes.")
+        
+        endpoint = f"{self.base_url}/AetherCore/clients"
+        
+        try:
+            self.logger.info("Solicitando lista de clientes al microservicio...")
+            
+            response = self.session.get(endpoint, timeout=20, verify=False)
+            
+            if response.status_code == 200:
+                return response.json()
+                
+            elif response.status_code == 401:
+                self.logger.warning("Token expirado (401). Reintentando login...")
+                self.is_authenticated = False
+                return self.get_clients()
+                
+            else:
+                self.logger.error(f"Error en el endpoint de clientes: {response.status_code} - {response.text}")
+                response.raise_for_status()
+
+        except Exception as e:
+            self.logger.error(f"Error al obtener clientes: {e}")
+            raise
