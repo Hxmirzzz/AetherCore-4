@@ -49,3 +49,20 @@ Backup/
 # *.png
 # *.gif
 # img/ # Si tienes una carpeta 'img' para ignorar
+
+# ==========================================
+# Compilación y Empaquetado (PyInstaller)
+# ==========================================
+
+# Carpetas temporales de construcción
+build/
+
+# Carpeta de distribución donde sale el programa final
+dist/
+
+# Ignorar cualquier archivo ejecutable nativo por seguridad
+*.exe
+*.bin
+
+# Opcional: Si NO quieres guardar la receta en GitHub, descomenta la siguiente línea:
+# *.spec

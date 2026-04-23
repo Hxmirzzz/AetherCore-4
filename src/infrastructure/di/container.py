@@ -5,7 +5,7 @@ from typing import Optional
 from src.infrastructure.config.settings import get_config
 
 # API
-from src.application.services.api_service import ApiService
+from src.presentation.api.internal_api_client import ApiService
 
 # Excel Processing
 from src.application.processors.excel.excel_file_reader import ExcelFileReader

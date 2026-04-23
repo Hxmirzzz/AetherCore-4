@@ -120,3 +120,73 @@ class ApiService:
         except Exception as e:
             self.logger.error(f"Error al obtener clientes: {e}")
             raise
+
+    def register_event(self, log_data: dict) -> Optional[dict]:
+        """
+        Registra un evento en la API de VCash.
+        """
+        if not self.is_authenticated:
+            if not self.login():
+                return None
+        
+        endpoint = f"{self.base_url}/AetherCore/log"
+        
+        try:
+            self.logger.info("Registrando evento en la API...")
+            
+            response = self.session.post(endpoint, json=log_data, timeout=15, verify=False)
+            
+            if response.status_code in [200, 201]:
+                return response.json()
+                
+            elif response.status_code == 401:
+                self.logger.warning("Token expirado (401). Reintentando login...")
+                self.is_authenticated = False
+                return self.register_event(log_data)
+
+            elif response.status_code == 400:
+                self.logger.error(f"Error en el endpoint de registro de eventos: {response.status_code} - {response.text}")
+                return None
+                
+            else:
+                self.logger.error(f"Error en el endpoint de registro de eventos: {response.status_code} - {response.text}")
+                return None
+
+        except Exception as e:
+            self.logger.error(f"Error al registrar evento: {e}")
+            return None
+
+    def update_event(self, log_id: int, status_data: dict) -> Optional[dict]:
+        """
+        Actualiza un evento en la API de VCash.
+        """
+        if not self.is_authenticated:
+            if not self.login():
+                return None
+        
+        endpoint = f"{self.base_url}/AetherCore/log/{log_id}"
+        
+        try:
+            self.logger.info(f"Actualizando evento en la API... ID: {log_id}")
+            
+            response = self.session.put(endpoint, json=status_data, timeout=10, verify=False)
+            
+            if response.status_code in [200, 204]:
+                return response.json() if response.text else { "status": "success" }
+                
+            elif response.status_code == 401:
+                self.logger.warning("Token expirado (401). Reintentando login...")
+                self.is_authenticated = False
+                return self.update_event(log_id, status_data)
+
+            elif response.status_code == 400:
+                self.logger.error(f"Error en el endpoint de actualización de eventos: {response.status_code} - {response.text}")
+                return None
+                
+            else:
+                self.logger.error(f"Error en el endpoint de actualización de eventos: {response.status_code} - {response.text}")
+                return None
+
+        except Exception as e:
+            self.logger.error(f"Error al actualizar evento: {e}")
+            return None

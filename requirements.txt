@@ -17,3 +17,6 @@ pydantic>=2.0.0
 
 # --- Configuración de Aplicación ---
 pydantic-settings>=2.0.0
+
+# --- Empaquetador ---
+pyinstaller>=6.20.0

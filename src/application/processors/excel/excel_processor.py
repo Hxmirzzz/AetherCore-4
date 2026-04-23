@@ -5,11 +5,13 @@ import os
 import shutil
 from datetime import datetime
 import openpyxl
+import uuid
+import json
 
 from src.infrastructure.file_system.path_manager import PathManager
 from src.application.processors.excel.excel_file_reader import ExcelFileReader
 from src.application.processors.excel.excel_processor_factory import ExcelProcessorFactory
-from src.application.services.api_service import ApiService
+from src.presentation.api.internal_api_client import ApiService
 from src.domain.value_objects.cliente_folder import ClienteFolder
 from src.domain.value_objects.codigo_punto import CodigoPunto
 
@@ -48,21 +50,40 @@ class ExcelProcessor:
         Returns:
             True si procesó exitosamente, False en caso contrario
         """
+        log_id = None
         try:
             cliente_name = cliente_folder.folder_name
-
             self._path_manager.create_request_structure(cliente_name)
 
             logger.info(f"== Procesando: {ruta_excel.name} para Cliente: {cliente_name} ==")
+
+            if self._api_service:
+                log_payload = {
+                    "app": "AE_CORE_4",
+                    "name": ruta_excel.name,
+                    "fileType": "XLSX",
+                    "estado": "PROCESANDO",
+                    "recordCount": 0,
+                    "payloadJson": None,
+                    "correlationId": str(uuid.uuid4())
+                }
+                try:
+                    res_log = self._api_service.register_event(log_payload)
+                    if res_log:
+                        log_id = res_log.get("id") or res_log.get("Id")
+                except Exception as e:
+                    logger.error(f"Error al registrar evento de inicio: {e}")
         
             info = self._reader.read_multiple_sheets(ruta_excel)
             if not info:
+                self._actualizar_log_fallido(log_id, str(e), ruta_excel)
                 self._manejar_excel_fallido(ruta_excel, cliente_name, "Archivo vacío o ilegible")
                 return False
             
             try:
                 mapper = ExcelProcessorFactory.get_mapper(cliente_folder.cod_cliente)
             except ValueError as e:
+                self._actualizar_log_fallido(log_id, str(e), ruta_excel)
                 self._manejar_excel_fallido(ruta_excel, cliente_name, str(e))
                 return False
 
@@ -93,20 +114,39 @@ class ExcelProcessor:
                     mapeo_filas_origen[key] = (nombre_hoja, idx_fila, dto.numero_pedido)
                 
             if not dtos_a_enviar:
+                self._actualizar_log_fallido(log_id, "No se encontraron registros válidos en el archivo", ruta_excel)
                 self._manejar_excel_fallido(ruta_excel, cliente_name, "No se encontraron registros válidos en el archivo")
                 return False
 
-            logger.info(f"🚀 Enviando {len(dtos_a_enviar)} servicios a VCashApp vía API...")
+            cantidad_registros = len(dtos_a_enviar)
+            payload_str = json.dumps([dto.__dict__ for dto in dtos_a_enviar], default=str)
+            logger.info(f"🚀 Enviando {cantidad_registros} servicios a VCashApp vía API...")
             respuesta = self._api_service.upload_services(dtos_a_enviar)
 
             if respuesta:
+                if log_id and self._api_service:
+                    try:
+                        self._api_service.update_event(log_id, {
+                            "estado": "COMPLETADO",
+                            "responseJson": json.dumps(respuesta),
+                            "errorDetails": None,
+                            "processedBy": "AE4",
+                            "filePath": str(ruta_excel.absolute()),
+                            "recordCount": cantidad_registros,
+                            "payloadJson": payload_str
+                        })
+                    except Exception as e:
+                        logger.error(f"Error al actualizar log: {e}")
+
                 return self._gestionar_finalizacion(ruta_excel, cliente_name, respuesta, mapeo_filas_origen)
             else:
+                self._actualizar_log_fallido(log_id, "Error al enviar servicios a VCashApp", ruta_excel)
                 self._manejar_excel_fallido(ruta_excel, cliente_name, "Error al enviar servicios a VCashApp")
                 return False
             
         except Exception as e:
             logger.exception(f"❌ Error crítico: {e}")
+            self._actualizar_log_fallido(log_id, f"Error crítico: {str(e)}", ruta_excel)
             self._manejar_excel_fallido(ruta_excel, cliente_name, str(e))
             return False
 
@@ -257,3 +297,21 @@ class ExcelProcessor:
             logger.info(f"Log de error creado: {destino.name}")
         except Exception as e:
             logger.error(f"Error moviendo archivo fallido: {e}")
+
+    def _actualizar_log_fallido(self, log_id: int | None, error_msg: str, ruta_excel: Path, record_count: int = 0, payload_str: str = None):
+        """
+        Actualiza el log de un archivo fallido.
+        """
+        if log_id and self._api_service:
+            try:
+                self._api_service.update_event(log_id, {
+                    "estado": "FALLIDO",
+                    "responseJson": None,
+                    "errorDetails": error_msg,
+                    "processedBy": "AE4",
+                    "filePath": str(ruta_excel.absolute()),
+                    "recordCount": record_count,
+                    "payloadJson": payload_str
+                })
+            except Exception as e:
+                logger.error(f"Error al actualizar log fallido {log_id}: {e}")
