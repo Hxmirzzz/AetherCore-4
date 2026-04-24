@@ -21,6 +21,20 @@ class ApiConfig(BaseSettings):
         extra='ignore',
     )
 
+class ExternalApiConfig(BaseSettings):
+    """
+    Configuración para la comunicación con la API externa.
+    """
+    url: str = Field(..., alias='EXTERNAL_API_URL')
+    user: str = Field(..., alias='EXTERNAL_API_USER')
+    password: str = Field(..., alias='EXTERNAL_API_PASSWORD')
+
+    model_config = SettingsConfigDict(
+        env_file='.env',
+        env_file_encoding='utf-8',
+        extra='ignore',
+    )
+
 class PathConfig(BaseSettings):
     """
     Configuración de rutas/carpetas de la aplicación.
@@ -65,6 +79,7 @@ class AppConfig(BaseSettings):
     environment: str = Field(default='DEV', alias='APP_ENV')
 
     api: ApiConfig = Field(default_factory=ApiConfig)
+    external_api: ExternalApiConfig = Field(default_factory=ExternalApiConfig)
     paths: PathConfig = Field(default_factory=PathConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
 

@@ -1,11 +1,12 @@
 from __future__ import annotations
 from typing import Optional
 
-# Config y DB
+# Config
 from src.infrastructure.config.settings import get_config
 
 # API
 from src.presentation.api.internal_api_client import ApiService
+from src.presentation.api.external_api_client import ExternalApiClient
 
 # Excel Processing
 from src.application.processors.excel.excel_file_reader import ExcelFileReader
@@ -24,6 +25,7 @@ class ApplicationContainer:
 
     _config = None
     _api_service: Optional[ApiService] = None
+    _external_api: Optional[ExternalApiClient] = None
 
     # ---------- Config ----------
     def config(self):
@@ -47,6 +49,15 @@ class ApplicationContainer:
             )
         return self._api_service
 
+    def external_api(self) -> ExternalApiClient:
+        """
+        Singleton del servicio de comunicación con la API Externa.
+        """
+        if self._external_api is None:
+            conf = self.config()
+            self._external_api = ExternalApiClient(conf)
+        return self._external_api
+
     # ====== XLSX PROCESSORS ======
     def excel_file_reader(self) -> ExcelFileReader:
         """
@@ -68,7 +79,8 @@ class ApplicationContainer:
         return ExcelProcessor(
             reader=self.excel_file_reader(),
             api_service=self.api_service(),
-            path_manager=self.path_manager()
+            external_api=self.external_api(),
+            path_manager=self.path_manager(),
         )
         
     # ====== FILE SYSTEM ======

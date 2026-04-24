@@ -204,5 +204,3 @@ class EmergencyMapper(BaseExcelMapper):
         
         logger.warning(f"⚠️ No se pudo entender el formato de fecha '{val_str}'. Usando la de hoy.")
         return date.today()
-        
-        

@@ -8,12 +8,15 @@ import openpyxl
 import uuid
 import json
 
+from pandas.core.generic import dt
+
 from src.infrastructure.file_system.path_manager import PathManager
 from src.application.processors.excel.excel_file_reader import ExcelFileReader
 from src.application.processors.excel.excel_processor_factory import ExcelProcessorFactory
 from src.presentation.api.internal_api_client import ApiService
 from src.domain.value_objects.cliente_folder import ClienteFolder
 from src.domain.value_objects.codigo_punto import CodigoPunto
+from src.presentation.api.external_api_client import ExternalApiClient
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,7 @@ class ExcelProcessor:
         self,
         reader: ExcelFileReader | None = None,
         api_service: ApiService | None = None,
+        external_api: ExternalApiClient | None = None,
         path_manager: PathManager | None = None
     ):
         """
@@ -33,6 +37,7 @@ class ExcelProcessor:
         """
         self._reader = reader or ExcelFileReader()
         self._api_service = api_service
+        self._external_api = external_api
         self._path_manager = path_manager or PathManager()
 
     def procesar_archivo_excel(
@@ -137,6 +142,20 @@ class ExcelProcessor:
                         })
                     except Exception as e:
                         logger.error(f"Error al actualizar log: {e}")
+                if self._external_api:
+                    try:
+                        payload_externo = self._preparar_payload_externo(dtos_a_enviar)
+
+                        logger.info(f"🌐 Disparando {len(payload_externo)} servicios a la API Externa en modo Bulk...")
+
+                        res_ext = self._external_api.create_bulk_orders(payload_externo)
+                        
+                        if res_ext.get("status") == "success":
+                            logger.info("✅ Servicios enviados exitosamente a la API Externa")
+                        else:
+                            logger.warning(f"⚠️ Algunos servicios fallaron en la API Externa: {res_ext.get('message', 'Unknown error')}")
+                    except Exception as e:
+                        logger.error(f"Error al enviar servicios a la API Externa: {e}")
 
                 return self._gestionar_finalizacion(ruta_excel, cliente_name, respuesta, mapeo_filas_origen)
             else:
@@ -315,3 +334,45 @@ class ExcelProcessor:
                 })
             except Exception as e:
                 logger.error(f"Error al actualizar log fallido {log_id}: {e}")
+
+    def _preparar_payload_externo(self, dtos: list) -> list:
+        """
+        Prepara el payload para enviar a la API externa.
+        """
+        payload = []
+        for dto in dtos:
+            punto = str(dto.cod_punto_origen).strip()
+            raw_value = dto.valor_total_declarado
+            if not raw_value:
+                raw_value = dto.valor_billete + dto.valor_moneda
+            logger.info(f"🔍 DEBUG MONTO - Valor crudo: '{raw_value}' | Tipo: {type(raw_value)}")
+
+            try:
+                clean_value = str(raw_value).replace('$', '').replace(',', '').replace(' ', '').strip()
+                total_service = str(int(float(clean_value)))
+            except (ValueError, TypeError):
+                logger.error(f"❌ ERROR CONVERSION - No se pudo convertir '{raw_value}' a entero")
+                total_service = "0"
+
+            service = {
+                "client_code": str(dto.cod_cliente),
+                "service_type": "SC",
+                "service_date": str(dto.fecha_programacion),
+                "time_window_start": "08:00:00.000Z",
+                "time_window_end": "18:00:00.000Z",
+                "declared_amount": total_service,
+                "currency": "COP",
+                "observations": str(dto.observaciones or ""),
+                "bank_name": "",
+                "bank_account_number": "",
+                "bank_account_holder": "",
+                "requested_denominations": []
+            }
+
+            if "-" in punto:
+                service["atm_code"] = punto
+            elif punto:
+                service["point_code"] = punto
+
+            payload.append(service)
+        return payload
