@@ -54,7 +54,7 @@ class ExternalApiClient:
         url = f"{self.base_url}/service-orders/"
         try:
             response = self.session.post(url, json=order_data, timeout=15)
-            if response.status_code == 400:
+            if response.status_code >= 400:
                 logger.error(f"Error in POST request to {url}: {response.status_code}")
                 req = response.request
 
@@ -63,7 +63,7 @@ class ExternalApiClient:
                 logger.error("=" * 60)
                 logger.error(f"Method and URL: {req.method} {req.url}")
                 logger.error(f"Headers: {dict(req.headers)}")
-                logger.error(f"Body:\n{cuerpo_enviado}")
+                logger.error(f"Body Real Enviado:\n{cuerpo_enviado}")
                 logger.error("-" * 60)
                 logger.error(f"Response:\n{response.text}")
                 logger.error("=" * 60)

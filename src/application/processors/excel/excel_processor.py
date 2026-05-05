@@ -4,11 +4,10 @@ import logging
 import os
 import shutil
 from datetime import datetime
+import pandas as pd
 import openpyxl
 import uuid
 import json
-
-from pandas.core.generic import dt
 
 from src.infrastructure.file_system.path_manager import PathManager
 from src.application.processors.excel.excel_file_reader import ExcelFileReader
@@ -30,7 +29,8 @@ class ExcelProcessor:
         reader: ExcelFileReader | None = None,
         api_service: ApiService | None = None,
         external_api: ExternalApiClient | None = None,
-        path_manager: PathManager | None = None
+        path_manager: PathManager | None = None,
+        api_bulk_limit: int = 10
     ):
         """
         Inicializa el procesador.
@@ -39,6 +39,7 @@ class ExcelProcessor:
         self._api_service = api_service
         self._external_api = external_api
         self._path_manager = path_manager or PathManager()
+        self._api_bulk_limit = api_bulk_limit
 
     def procesar_archivo_excel(
         self,
@@ -125,10 +126,58 @@ class ExcelProcessor:
 
             cantidad_registros = len(dtos_a_enviar)
             payload_str = json.dumps([dto.__dict__ for dto in dtos_a_enviar], default=str)
-            logger.info(f"🚀 Enviando {cantidad_registros} servicios a VCashApp vía API...")
-            respuesta = self._api_service.upload_services(dtos_a_enviar)
 
-            if respuesta:
+            logger.info(f"🚀 Enviando {cantidad_registros} servicios a VCashApp vía API...")
+            res_interna = self._api_service.upload_services(dtos_a_enviar)
+            exito_interno = res_interna is not None
+
+            res_externa = None
+            exito_externo = False
+
+            if self._external_api:
+                logger.info(f"🌐 Preparando y enviando {cantidad_registros} servicios a CashOS (Externa)...")
+                try:
+                    payload_externo = self._preparar_payload_externo(dtos_a_enviar)
+                    if cantidad_registros > self._api_bulk_limit:
+                        logger.info(f"📦 Usando endpoint BULK (> {self._api_bulk_limit} órdenes)")
+                        res_externa = self._external_api.create_bulk_orders(payload_externo)
+                        exito_externo = res_externa.get("status") == "success"
+                    else:
+                        logger.info(f"📤 Usando envío INDIVIDUAL (<= {self._api_bulk_limit} órdenes)")
+                        detalles_individual = []
+                        for idx, service in enumerate(payload_externo):
+                            try:
+                                res = self._external_api.create_service_order(service)
+                                if res.get("status") == "success":
+                                    detalles_individual.append({"success": True, "message": "OK"})
+                                else:
+                                    detalles_individual.append({"success": False, "message": res.get("message", "Error")})
+                                    logger.error(f"❌ Orden {idx + 1} falló: {res.get('message')}")
+                            except Exception as ex:
+                                detalles_individual.append({"success": False, "message": str(ex)})
+                                logger.error(f"❌ Orden {idx + 1} falló con excepción: {ex}")
+
+                        total_ok = sum(1 for d in detalles_individual if d["success"])
+                        res_externa = {
+                            "status": "success" if total_ok == len(detalles_individual) else "error",
+                            "details": detalles_individual,
+                            "summary": f"{total_ok} OK / {len(detalles_individual)} Total"
+                        }
+                        exito_externo = total_ok == len(detalles_individual)
+                except Exception as e:
+                    logger.error(f"Error al enviar servicios a CashOS (Externa): {e}")
+                    res_externa = {"status": "error", "message": str(e), "details": "Error de conexión."}
+            else:
+                res_externa = {"status": "error", "message": "Cliente de API Externa no configurado."}
+
+            respuesta = {
+                "Internal_API_Response": res_interna,
+                "External_API_Response": res_externa
+            }
+
+            if exito_interno and exito_externo:
+                logger.info("✅ Doble escritura exitosa. Ambas APIs aceptaron los datos.")
+
                 if log_id and self._api_service:
                     try:
                         self._api_service.update_event(log_id, {
@@ -142,25 +191,35 @@ class ExcelProcessor:
                         })
                     except Exception as e:
                         logger.error(f"Error al actualizar log: {e}")
-                if self._external_api:
-                    try:
-                        payload_externo = self._preparar_payload_externo(dtos_a_enviar)
 
-                        logger.info(f"🌐 Disparando {len(payload_externo)} servicios a la API Externa en modo Bulk...")
-
-                        res_ext = self._external_api.create_bulk_orders(payload_externo)
-                        
-                        if res_ext.get("status") == "success":
-                            logger.info("✅ Servicios enviados exitosamente a la API Externa")
-                        else:
-                            logger.warning(f"⚠️ Algunos servicios fallaron en la API Externa: {res_ext.get('message', 'Unknown error')}")
-                    except Exception as e:
-                        logger.error(f"Error al enviar servicios a la API Externa: {e}")
-
-                return self._gestionar_finalizacion(ruta_excel, cliente_name, respuesta, mapeo_filas_origen)
+                return self._gestionar_finalizacion(ruta_excel, cliente_name, res_interna, mapeo_filas_origen)
             else:
-                self._actualizar_log_fallido(log_id, "Error al enviar servicios a VCashApp", ruta_excel)
-                self._manejar_excel_fallido(ruta_excel, cliente_name, "Error al enviar servicios a VCashApp")
+                mensajes_error = []
+                if not exito_interno:
+                    mensajes_error.append("Fallo en API Interna (VCashApp).")
+                if not exito_externo:
+                    error_msg = res_externa.get("message", "Error desconocido")
+                    error_det = res_externa.get("details", "")
+                    mensajes_error.append(f"Fallo en API Externa (CashOS): {error_msg} -> {error_det}")
+
+                razon_fallo_combinado = " | ".join(mensajes_error)
+                logger.error(f"❌ Abortando por fallo en sincronización estricta: {razon_fallo_combinado}")
+
+                if log_id and self._api_service:
+                    try:
+                        self._api_service.update_event(log_id, {
+                            "estado": "FALLIDO",
+                            "responseJson": json.dumps(respuesta),
+                            "errorDetails": razon_fallo_combinado,
+                            "processedBy": "AE4",
+                            "filePath": str(ruta_excel.absolute()),
+                            "recordCount": cantidad_registros,
+                            "payloadJson": payload_str
+                        })
+                    except Exception as e:
+                        logger.error(f"Error al actualizar log fallido: {e}")
+                
+                self._manejar_excel_fallido(ruta_excel, cliente_name, razon_fallo_combinado)
                 return False
             
         except Exception as e:
@@ -341,26 +400,29 @@ class ExcelProcessor:
         """
         payload = []
         for dto in dtos:
-            punto = str(dto.cod_punto_origen).strip()
-            raw_value = dto.valor_total_declarado
-            if not raw_value:
-                raw_value = dto.valor_billete + dto.valor_moneda
-            logger.info(f"🔍 DEBUG MONTO - Valor crudo: '{raw_value}' | Tipo: {type(raw_value)}")
+            raw_point = str(dto.cod_punto_origen).strip()
+            client_code = str(dto.cod_cliente)
+            if raw_point.startswith(f"{client_code}-"):
+                point = raw_point
+            else:
+                point = f"{client_code}-{raw_point}"
 
+            raw_date = dto.fecha_programacion
             try:
-                clean_value = str(raw_value).replace('$', '').replace(',', '').replace(' ', '').strip()
-                total_service = str(int(float(clean_value)))
-            except (ValueError, TypeError):
-                logger.error(f"❌ ERROR CONVERSION - No se pudo convertir '{raw_value}' a entero")
-                total_service = "0"
+                iso_date = pd.to_datetime(raw_date, dayfirst=True).strftime("%Y-%m-%d")
+            except Exception as e:
+                logger.error(f"Error convirtiendo fecha: {e}")
+                iso_date = str(raw_date).split(" ")[0]
+
+            monto_declarado = str(int(dto.valor_total_declarado)) if dto.valor_total_declarado else "0"
 
             service = {
-                "client_code": str(dto.cod_cliente),
-                "service_type": "SC",
-                "service_date": str(dto.fecha_programacion),
+                "client_code": client_code,
+                "service_type": dto.cef_tipo_transaccion,
+                "service_date": iso_date,
                 "time_window_start": "08:00:00.000Z",
                 "time_window_end": "18:00:00.000Z",
-                "declared_amount": total_service,
+                "declared_amount": monto_declarado,
                 "currency": "COP",
                 "observations": str(dto.observaciones or ""),
                 "bank_name": "",
@@ -369,10 +431,10 @@ class ExcelProcessor:
                 "requested_denominations": []
             }
 
-            if "-" in punto:
-                service["atm_code"] = punto
-            elif punto:
-                service["point_code"] = punto
+            if "-" in raw_point:
+                service["atm_code"] = point
+            elif raw_point:
+                service["point_code"] = point
 
             payload.append(service)
         return payload

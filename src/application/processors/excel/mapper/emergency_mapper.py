@@ -53,7 +53,7 @@ class EmergencyMapper(BaseExcelMapper):
         logger.info(f"Procesando archivo Emergency: {nombre_archivo}")
 
         headers = getattr(df, 'attrs', {}).get('header_rows', pd.DataFrame())
-        info_kit = self._extaer_info_kits(headers)
+        info_kit = self._extraer_info_kits(headers)
         
         unidad_moneda = info_kit['moneda']['valor']
         detalle_moneda = info_kit['moneda']['detalle']
@@ -74,7 +74,7 @@ class EmergencyMapper(BaseExcelMapper):
                 total_moneda = Decimal(qty_moneda) * unidad_moneda
                 total_billete = Decimal(qty_billete) * unidad_billete
                 valor_servicio = total_moneda + total_billete
-                
+
                 fecha_serv = self._parsear_fecha(row.get(self.col_fecha))
                 now = datetime.now()
 
@@ -100,7 +100,7 @@ class EmergencyMapper(BaseExcelMapper):
                     cef_numero_planilla=0,
                     valor_total_declarado=valor_servicio,
                     cef_divisa="COP",
-                    cef_tipo_transaccion="PV",
+                    cef_tipo_transaccion="SC",
                     cef_estado_transaccion="ProvisionEnProceso"
                 )
 
@@ -111,7 +111,7 @@ class EmergencyMapper(BaseExcelMapper):
 
         return dtos
 
-    def _extaer_info_kits(self, raw_df: pd.DataFrame) -> dict:
+    def _extraer_info_kits(self, raw_df: pd.DataFrame) -> dict:
         """
         Analiza la cabecera para extraer el contenido y valor de los kits.
         Retorna: {'moneda': {'valor': X, 'detalle': '...'}, 'billete': ...}
@@ -149,12 +149,17 @@ class EmergencyMapper(BaseExcelMapper):
                     denom = str(raw_df.iloc[r, table_idx]).strip()
                     cant_raw = raw_df.iloc[r, table_idx + 1]
                     valor_raw = raw_df.iloc[r, table_idx + 2]
-                    
+
                     if not denom or denom.lower() == 'nan': continue
 
                     if "TOTAL" in denom.upper():
-                        valor_total = self._parse_valor_monetario(valor_raw)
                         break
+
+                    cant = self._parse_entero(cant_raw)
+                    valor = self._parse_valor_monetario(valor_raw)
+                    if cant > 0:
+                        items.append(f"{denom}:{cant}")
+                        valor_total += valor
 
                     cant = self._parse_entero(cant_raw)
                     if cant > 0:
@@ -168,10 +173,26 @@ class EmergencyMapper(BaseExcelMapper):
         return info
 
     def _parse_valor_monetario(self, val) -> Decimal:
-        if pd.isna(val) : return Decimal('0')
+        if pd.isna(val): 
+            return Decimal('0')
         s = str(val).replace('$', '').replace(' ', '').replace('_', '').strip()
+        
+        if ',' in s and '.' in s:
+            if s.rfind(',') > s.rfind('.'):
+                s = s.replace('.', '').replace(',', '.')
+            else:
+                s = s.replace(',', '')
+        elif ',' in s:
+            if len(s) - s.rfind(',') - 1 <= 2:
+                s = s.replace(',', '')
+        elif '.' in s:
+            parts = s.split('.')
+            if len(parts[-1]) == 3 and len(parts) > 1:
+                s = s.replace('.', '')
+        
         try:
-            return Decimal(s)
+            result = Decimal(s)
+            return result
         except:
             return Decimal('0')
 

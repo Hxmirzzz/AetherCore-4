@@ -81,6 +81,7 @@ class ApplicationContainer:
             api_service=self.api_service(),
             external_api=self.external_api(),
             path_manager=self.path_manager(),
+            api_bulk_limit=self.config().api_bulk_limit,
         )
         
     # ====== FILE SYSTEM ======

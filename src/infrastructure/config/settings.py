@@ -84,6 +84,7 @@ class AppConfig(BaseSettings):
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
 
     clientes_permitidos: List[str] = Field(default=['4', '45', '46', '47', '48'])
+    api_bulk_limit: int = Field(default=10, alias='API_BULK_LIMIT')
 
     model_config = SettingsConfigDict(
         env_file='.env',
