@@ -52,6 +52,12 @@ class ExternalApiClient:
             self.authenticate()
 
         url = f"{self.base_url}/service-orders/"
+
+        logger.info("=" * 60)
+        logger.info("📤 PREVIEW DEL PAYLOAD INDIVIDUAL QUE SE VA A ENVIAR:")
+        logger.info(json.dumps(order_data, indent=4, default=str))
+        logger.info("=" * 60)
+        
         try:
             response = self.session.post(url, json=order_data, timeout=15)
             if response.status_code >= 400:

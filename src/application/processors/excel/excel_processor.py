@@ -408,11 +408,17 @@ class ExcelProcessor:
                 point = f"{client_code}-{raw_point}"
 
             raw_date = dto.fecha_programacion
+            str_date = str(raw_date).strip()
+
             try:
-                iso_date = pd.to_datetime(raw_date, dayfirst=True).strftime("%Y-%m-%d")
+                if "/" in str_date and len(str_date.split("/")[0]) <= 2:
+                    date = str_date.split(" ")[0]
+                    iso_date = datetime.strptime(date, "%d/%m/%Y").strftime("%Y-%m-%d")
+                else:
+                    iso_date = pd.to_datetime(raw_date, dayfirst=True).strftime("%Y-%m-%d")
             except Exception as e:
-                logger.error(f"Error convirtiendo fecha: {e}")
-                iso_date = str(raw_date).split(" ")[0]
+                logger.error(f"Error convirtiendo fecha '{raw_date}': {e}")
+                iso_date = str_date.split(" ")[0].replace("/", "-")
 
             monto_declarado = str(int(dto.valor_total_declarado)) if dto.valor_total_declarado else "0"
 
