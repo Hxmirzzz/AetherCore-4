@@ -206,8 +206,9 @@ class EmergencyMapper(BaseExcelMapper):
         if pd.isna(val) or not str(val).strip() : return date.today()
 
         if isinstance(val, (datetime, pd.Timestamp)):
-            if isinstance(val, pd.Timestamp):
-                pass
+            if val.day > 12:
+                return val.date()
+            val = val.strftime('%d/%m/%Y')
 
         val_str = str(val).split()[0].strip()
 
@@ -218,14 +219,11 @@ class EmergencyMapper(BaseExcelMapper):
             '%Y/%m/%d'  # 2026/05/09
         ]
 
-        try:
-            return pd.to_datetime(val, dayfirst=True).date()
-        except:
-            for fmt in formatos:
-                try:
-                    return datetime.strptime(val_str, fmt).date()
-                except ValueError:
-                    continue
+        for fmt in formatos:
+            try:
+                return datetime.strptime(val_str, fmt).date()
+            except ValueError:
+                continue
         
         logger.warning(f"⚠️ No se pudo entender el formato de fecha '{val_str}'. Usando la de hoy.")
         return date.today()

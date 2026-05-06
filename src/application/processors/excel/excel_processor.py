@@ -30,7 +30,8 @@ class ExcelProcessor:
         api_service: ApiService | None = None,
         external_api: ExternalApiClient | None = None,
         path_manager: PathManager | None = None,
-        api_bulk_limit: int = 10
+        api_bulk_limit: int = 10,
+        sync_apis: bool = True
     ):
         """
         Inicializa el procesador.
@@ -40,6 +41,7 @@ class ExcelProcessor:
         self._external_api = external_api
         self._path_manager = path_manager or PathManager()
         self._api_bulk_limit = api_bulk_limit
+        self._sync_apis = sync_apis
 
     def procesar_archivo_excel(
         self,
@@ -175,52 +177,97 @@ class ExcelProcessor:
                 "External_API_Response": res_externa
             }
 
-            if exito_interno and exito_externo:
-                logger.info("✅ Doble escritura exitosa. Ambas APIs aceptaron los datos.")
+            if self._sync_apis:
+                # Modo sincronizado: ambas APIs deben responder OK
+                if exito_interno and exito_externo:
+                    logger.info("✅ Doble escritura exitosa. Ambas APIs aceptaron los datos.")
 
-                if log_id and self._api_service:
-                    try:
-                        self._api_service.update_event(log_id, {
-                            "estado": "COMPLETADO",
-                            "responseJson": json.dumps(respuesta),
-                            "errorDetails": None,
-                            "processedBy": "AE4",
-                            "filePath": str(ruta_excel.absolute()),
-                            "recordCount": cantidad_registros,
-                            "payloadJson": payload_str
-                        })
-                    except Exception as e:
-                        logger.error(f"Error al actualizar log: {e}")
+                    if log_id and self._api_service:
+                        try:
+                            self._api_service.update_event(log_id, {
+                                "estado": "COMPLETADO",
+                                "responseJson": json.dumps(respuesta),
+                                "errorDetails": None,
+                                "processedBy": "AE4",
+                                "filePath": str(ruta_excel.absolute()),
+                                "recordCount": cantidad_registros,
+                                "payloadJson": payload_str
+                            })
+                        except Exception as e:
+                            logger.error(f"Error al actualizar log: {e}")
 
-                return self._gestionar_finalizacion(ruta_excel, cliente_name, res_interna, mapeo_filas_origen)
+                    return self._gestionar_finalizacion(ruta_excel, cliente_name, res_interna, mapeo_filas_origen)
+                else:
+                    mensajes_error = []
+                    if not exito_interno:
+                        mensajes_error.append("Fallo en API Interna (VCashApp).")
+                    if not exito_externo:
+                        error_msg = res_externa.get("message", "Error desconocido")
+                        error_det = res_externa.get("details", "")
+                        mensajes_error.append(f"Fallo en API Externa (CashOS): {error_msg} -> {error_det}")
+
+                    razon_fallo_combinado = " | ".join(mensajes_error)
+                    logger.error(f"❌ Abortando por fallo en sincronización estricta: {razon_fallo_combinado}")
+
+                    if log_id and self._api_service:
+                        try:
+                            self._api_service.update_event(log_id, {
+                                "estado": "FALLIDO",
+                                "responseJson": json.dumps(respuesta),
+                                "errorDetails": razon_fallo_combinado,
+                                "processedBy": "AE4",
+                                "filePath": str(ruta_excel.absolute()),
+                                "recordCount": cantidad_registros,
+                                "payloadJson": payload_str
+                            })
+                        except Exception as e:
+                            logger.error(f"Error al actualizar log fallido: {e}")
+                    
+                    self._manejar_excel_fallido(ruta_excel, cliente_name, razon_fallo_combinado)
+                    return False
             else:
-                mensajes_error = []
-                if not exito_interno:
-                    mensajes_error.append("Fallo en API Interna (VCashApp).")
-                if not exito_externo:
-                    error_msg = res_externa.get("message", "Error desconocido")
-                    error_det = res_externa.get("details", "")
-                    mensajes_error.append(f"Fallo en API Externa (CashOS): {error_msg} -> {error_det}")
+                # Modo independiente: la API interna manda el resultado final
+                if exito_interno:
+                    if not exito_externo:
+                        logger.warning("⚠️ API Externa falló, pero SYNC_APIS=false. Proceso continúa por API interna.")
+                    else:
+                        logger.info("✅ Ambas APIs respondieron OK (modo independiente).")
 
-                razon_fallo_combinado = " | ".join(mensajes_error)
-                logger.error(f"❌ Abortando por fallo en sincronización estricta: {razon_fallo_combinado}")
+                    if log_id and self._api_service:
+                        try:
+                            self._api_service.update_event(log_id, {
+                                "estado": "COMPLETADO",
+                                "responseJson": json.dumps(respuesta),
+                                "errorDetails": None,
+                                "processedBy": "AE4",
+                                "filePath": str(ruta_excel.absolute()),
+                                "recordCount": cantidad_registros,
+                                "payloadJson": payload_str
+                            })
+                        except Exception as e:
+                            logger.error(f"Error al actualizar log: {e}")
 
-                if log_id and self._api_service:
-                    try:
-                        self._api_service.update_event(log_id, {
-                            "estado": "FALLIDO",
-                            "responseJson": json.dumps(respuesta),
-                            "errorDetails": razon_fallo_combinado,
-                            "processedBy": "AE4",
-                            "filePath": str(ruta_excel.absolute()),
-                            "recordCount": cantidad_registros,
-                            "payloadJson": payload_str
-                        })
-                    except Exception as e:
-                        logger.error(f"Error al actualizar log fallido: {e}")
-                
-                self._manejar_excel_fallido(ruta_excel, cliente_name, razon_fallo_combinado)
-                return False
+                    return self._gestionar_finalizacion(ruta_excel, cliente_name, res_interna, mapeo_filas_origen)
+                else:
+                    razon_fallo = "Fallo en API Interna (VCashApp)."
+                    logger.error(f"❌ Abortando porque la API Interna falló: {razon_fallo}")
+
+                    if log_id and self._api_service:
+                        try:
+                            self._api_service.update_event(log_id, {
+                                "estado": "FALLIDO",
+                                "responseJson": json.dumps(respuesta),
+                                "errorDetails": razon_fallo,
+                                "processedBy": "AE4",
+                                "filePath": str(ruta_excel.absolute()),
+                                "recordCount": cantidad_registros,
+                                "payloadJson": payload_str
+                            })
+                        except Exception as e:
+                            logger.error(f"Error al actualizar log fallido: {e}")
+                    
+                    self._manejar_excel_fallido(ruta_excel, cliente_name, razon_fallo)
+                    return False
             
         except Exception as e:
             logger.exception(f"❌ Error crítico: {e}")
@@ -407,18 +454,7 @@ class ExcelProcessor:
             else:
                 point = f"{client_code}-{raw_point}"
 
-            raw_date = dto.fecha_programacion
-            str_date = str(raw_date).strip()
-
-            try:
-                if "/" in str_date and len(str_date.split("/")[0]) <= 2:
-                    date = str_date.split(" ")[0]
-                    iso_date = datetime.strptime(date, "%d/%m/%Y").strftime("%Y-%m-%d")
-                else:
-                    iso_date = pd.to_datetime(raw_date, dayfirst=True).strftime("%Y-%m-%d")
-            except Exception as e:
-                logger.error(f"Error convirtiendo fecha '{raw_date}': {e}")
-                iso_date = str_date.split(" ")[0].replace("/", "-")
+            iso_date = str(dto.fecha_programacion).split(" ")[0].strip()
 
             monto_declarado = str(int(dto.valor_total_declarado)) if dto.valor_total_declarado else "0"
 
