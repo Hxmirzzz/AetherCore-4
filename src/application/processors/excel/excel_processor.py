@@ -458,6 +458,14 @@ class ExcelProcessor:
 
             monto_declarado = str(int(dto.valor_total_declarado)) if dto.valor_total_declarado else "0"
 
+            combo_quantity = max(dto.numero_kits_cambio, 0)
+            combo_lines = [
+                {
+                    "combo_code": "COMBO_A",
+                    "quantity": combo_quantity
+                }
+            ] if combo_quantity > 0 else []
+
             service = {
                 "client_code": client_code,
                 "service_type": dto.cef_tipo_transaccion,
@@ -470,7 +478,8 @@ class ExcelProcessor:
                 "bank_name": "",
                 "bank_account_number": "",
                 "bank_account_holder": "",
-                "requested_denominations": []
+                "requested_denominations": [],
+                "combo_lines": combo_lines
             }
 
             if "-" in raw_point:
