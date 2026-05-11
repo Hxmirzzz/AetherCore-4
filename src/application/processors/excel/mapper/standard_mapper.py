@@ -269,7 +269,7 @@ class StandardExcelMapper(BaseExcelMapper):
 
         valor_final = valor_billete + valor_moneda
         if valor_final == 0:
-            valor_final = self._parse_valor_monetario(row['VALOR_MONETARIO'])
+            valor_final = self._parse_valor_monetario(row['VALOR_TOTAL'])
             valor_billete = valor_final
         
         fecha_serv = self._parse_fecha(row.get('FECHA_SERVICIO') or row.get('FECHA'))
@@ -292,6 +292,8 @@ class StandardExcelMapper(BaseExcelMapper):
             cod_sucursal=1,
             fecha_solicitud=str(fecha_sol),
             hora_solicitud=datetime.now().strftime("%H:%M:%S"),
+            fecha_programacion=str(fecha_serv),
+            hora_programacion=datetime.now().strftime("%H:%M:%S"),
             cod_concepto=cod_con,
             cod_punto_origen=codigo_punto,
             cod_punto_destino="",
@@ -352,4 +354,10 @@ class StandardExcelMapper(BaseExcelMapper):
             return int(val_limpio)
         except:
             return 0
+
+    def _validar_no_vacio(self, df: pd.DataFrame) -> tuple[bool, str]:
+        """Valida que el DataFrame no sea None ni vacío."""
+        if df is None or df.empty:
+            return False, "DataFrame es None o está vacío"
+        return True, ""
         
