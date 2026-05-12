@@ -3,7 +3,7 @@ app:
   version: "4.0.0"
 
 storage:
-  input_folder: "solicitudes"
+  input_folder: "Solicitudes"
   logs_path: "logs"
 
 api:

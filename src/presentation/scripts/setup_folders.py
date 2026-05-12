@@ -20,7 +20,6 @@ from datetime import datetime
 
 from src.infrastructure.di.container import ApplicationContainer
 from src.domain.value_objects.cliente_folder import ClienteFolder
-from src.infrastructure.config.settings import get_config
 from src.infrastructure.file_system.path_manager import PathManager
 
 if sys.platform == 'win32':

@@ -23,6 +23,7 @@ from typing import List, Dict
 import time
 
 from src.infrastructure.di.container import ApplicationContainer
+from src.presentation.scripts.setup_folders import FolderSetup
 from src.domain.value_objects.cliente_folder import ClienteFolder
 from src.infrastructure.file_system.path_manager import PathManager
 
@@ -186,6 +187,35 @@ class ExcelConsoleRunner:
         logger.info(f"Fallidos: {stats['procesados_fallidos']}")
         logger.info("=" * 60)
 
+    def run_setup(self):
+        """
+        Ejecuta la configuración inicial de las carpetas
+        """
+        logger.info("=" * 60)
+        logger.info("MODO SETUP: CREANDO ESTRUCTURA DE CARPETAS")
+        logger.info("=" * 60)
+        
+        try:
+            api_service = self.container.api_service()
+            clients_api = api_service.get_clients()
+            
+            clients = [
+                {
+                    'cod_cliente': str(c['codCliente']),
+                    'nombre_cliente': c['nombreCliente']
+                }
+                for c in clients_api
+            ]
+
+            if not clients:
+                logger.warning("No se encontraron clientes en la API")
+                return
+            
+            setup = FolderSetup(self.base_dir)
+            setup.setup_all(clients)
+
+        except Exception as e:
+            logger.error(f"Error en setup: {e}")
 
 def main():
     parser = argparse.ArgumentParser(description='AetherCore 4 API Client')
@@ -194,6 +224,7 @@ def main():
     mode.add_argument('--once', action='store_true', help='Procesa todos los archivos pendientes una vez')
     mode.add_argument('--watch', action='store_true', help='Monitorea carpetas')
     mode.add_argument('--file', type=Path, help='Procesa un archivo específico')
+    mode.add_argument('--setup', action='store_true', help='Crea la estructura de carpetas')
     
     parser.add_argument('--cliente', type=str, help='Filtrar por código de cliente')
     parser.add_argument('--interval', type=int, default=10, help='Intervalo en segundos')
@@ -208,7 +239,11 @@ def main():
     try:
         runner = ExcelConsoleRunner(container)
         
-        if args.once:
+        if args.setup:
+            runner.run_setup()
+            return 0
+
+        elif args.once:
             stats = runner.run_once(cod_cliente=args.cliente)
             return 0 if stats['procesados_fallidos'] == 0 else 1
             
