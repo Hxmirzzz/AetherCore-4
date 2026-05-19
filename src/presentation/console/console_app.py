@@ -22,14 +22,13 @@ from pathlib import Path
 from typing import List, Dict
 import time
 
+from dotenv import load_dotenv
+
+from src.infrastructure.notifications.lumen_client import LumenNotificationClient
 from src.infrastructure.di.container import ApplicationContainer
 from src.presentation.scripts.setup_folders import FolderSetup
 from src.domain.value_objects.cliente_folder import ClienteFolder
 from src.infrastructure.file_system.path_manager import PathManager
-
-if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,6 +48,7 @@ class ExcelConsoleRunner:
         self.config = container.config()
         self.path_manager = PathManager()
         self.base_dir = self.path_manager.get_solicitudes_dir()
+        self.lumen_client = LumenNotificationClient()
 
         if not self.base_dir.exists():
             logger.warning(f"Directorio solicitudes no existe: {self.base_dir}")
@@ -173,9 +173,26 @@ class ExcelConsoleRunner:
     def _procesar_archivo(self, ruta_archivo: Path, cliente_folder: ClienteFolder) -> bool:
         try:
             excel_processor = self.container.excel_processor()
-            return excel_processor.procesar_archivo_excel(ruta_archivo, cliente_folder)
+            exito = excel_processor.procesar_archivo_excel(ruta_archivo, cliente_folder)
+
+            if not exito:
+                self.lumen_client.send_alert(
+                    app_name="AETHERCORE_4",
+                    subject=f"Error validando Excel: {ruta_archivo.name}",
+                    error_msg=f"El archivo del cliente {cliente_folder.cod_cliente} falló. Revisa los logs locales para ver el detalle.",
+                    severity="WARNING"
+                )
+
+            return exito
         except Exception as e:
             logger.error(f"Error procesando archivo {ruta_archivo.name}: {e}", exc_info=True)
+
+            self.lumen_client.send_alert(
+                app_name="AETHERCORE_4",
+                subject=f"Falla procesando Excel: {ruta_archivo.name}",
+                error_msg=f"Carpeta Cliente: {cliente_folder.cod_cliente}\nDetalle Técnico: {str(e)}",
+                severity="ERROR"
+            )
             return False
 
     def _imprimir_resumen(self, stats: Dict[str, int]):
@@ -218,6 +235,7 @@ class ExcelConsoleRunner:
             logger.error(f"Error en setup: {e}")
 
 def main():
+    load_dotenv()
     parser = argparse.ArgumentParser(description='AetherCore 4 API Client')
     
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -256,6 +274,14 @@ def main():
             
     except Exception as e:
         logger.error(f"Error crítico en la aplicación: {e}")
+
+        LumenNotificationClient().send_alert(
+            app_name="AETHERCORE_4",
+            subject="CAÍDA CRITICA DEL SISTEMA AETHERCORE",
+            error_msg=f"El runner se destuvo inesperadamente.\nDetalle: {str(e)}",
+            severity="ERROR",
+            channel="ALL"
+        )
         return 1
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import logging
 import shutil
+import time
 from pathlib import Path
 from src.domain.value_objects.cliente_folder import ClienteFolder
 from src.infrastructure.file_system.path_manager import PathManager
@@ -33,8 +34,19 @@ class ProcessingOrchestrator:
 
     def on_file_detected(self, file_path: str):
         ruta = Path(file_path)
-        logger.info(f"📂 Archivo detectado: {ruta.name}")
 
+        intentos = 0
+        while intentos < 10:
+            try:
+                ruta.rename(ruta)
+                break
+            except PermissionError:
+                logger.info(f"⚠️ Archivo {ruta.name} bloqueado. Reintentando en 1 segundo...")
+                time.sleep(1)
+                intentos += 1
+
+        logger.info(f"✅ Archivo {ruta.name} listo para procesar")
+        
         try:
             solicitud_name = ruta.parent.name
             cliente_name = ruta.parent.parent.name

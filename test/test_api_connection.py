@@ -2,8 +2,6 @@ import logging
 from src.infrastructure.di.container import ApplicationContainer
 from src.application.dto.servicio_dto import AetherServiceImportDto
 
-logging.basicConfig(level=logging.INFO)
-
 def test_flow():
     container = ApplicationContainer()
     api = container.api_service()

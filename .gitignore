@@ -19,9 +19,9 @@ data/
 env/
 .env/ # <-- Asegúrate de que esta línea es 'env/' si tu entorno virtual se llama 'env'
 
-# Archivos de configuración de IDEs (VS Code, etc.)
-# Ignora la carpeta .vscode de VS Code con configuraciones de usuario
+# Archivos de configuración de IDEs
 .vscode/
+.idea/
 
 # Archivos de registro (Logs)
 # Ignora la carpeta 'logs' dentro del proyecto (si se genera en tiempo de ejecución)
