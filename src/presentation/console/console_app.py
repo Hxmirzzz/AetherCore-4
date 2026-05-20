@@ -17,7 +17,6 @@ Uso:
 import argparse
 import logging
 import sys
-import io
 from pathlib import Path
 from typing import List, Dict
 import time
