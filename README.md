@@ -1,8 +1,8 @@
-# AetherCore - Procesamiento de Archivos
+# AetherCore 4 - Procesamiento de Archivos
 
 ## Descripción General
 
-Aplicación Python para el procesamiento automatizado de archivos (TXT/XML) con arquitectura limpia (Clean Architecture) y patrón de inyección de dependencias. Transforma archivos de entrada en formatos estructurados (Excel), genera respuestas de estado e inserta los datos procesados en SQL Server mediante stored procedures.
+Aplicación Python para el procesamiento automatizado de archivos Excel con arquitectura limpia (Clean Architecture) y patrón de inyección de dependencias. Transforma archivos de entrada en formatos estructurados, genera respuestas de estado e integra los datos procesados con 3 APIs externas para la gestión de servicios, órdenes y notificaciones.
 
 ## Características
 
@@ -12,24 +12,25 @@ Aplicación Python para el procesamiento automatizado de archivos (TXT/XML) con 
   * Fácil de mantener y extender
 
 * **Procesamiento de Archivos**
-  * Soporte para archivos TXT y XML
-  * Mapeo de códigos a descripciones usando datos de referencia
+  * Soporte para archivos Excel (.xlsx, .xlsm)
+  * Monitoreo en tiempo real de carpetas de entrada
+  * Procesamiento por cliente y solicitud con estructura organizada
   * Generación de reportes en Excel con formato profesional
   * Generación de archivos de respuesta con estado de procesamiento
 
-* **Integración con Base de Datos**
-  * Los servicios procesados se insertan automáticamente en las tablas `CgsServicios` y `CefTransacciones` mediante el stored procedure `AddServiceTransaction`
-  * Conexión de lectura (producción) para consultar datos de referencia y conexión de escritura (pruebas/local) para insertar servicios
-  * Verifica que los servicios no existan antes de insertarlos
-  * Commit automático en caso de éxito, rollback en caso de error
-  * Carga de datos de referencia desde base de datos (ciudades, clientes, puntos, sucursales)
-  * Caché de datos para mejorar el rendimiento
+* **Integración con APIs**
+  * **VCash API (Interna)**: Carga masiva de servicios, consulta de clientes autorizados, registro y actualización de eventos
+  * **External API**: Creación de órdenes de servicio (individual y bulk), obtención de mapeo de clientes y tipos de servicio
+  * **Lumen API**: Sistema de notificaciones y alertas para errores críticos y eventos importantes
+  * Autenticación mediante tokens Bearer/JWT con reintentos automáticos
+  * Manejo robusto de errores de conexión y timeouts
+  * Logging detallado de payloads y respuestas API
 
 * **Mapeo de Datos**
-  * Mapea registros TIPO 2 de archivos TXT a objetos `ServicioDTO` y `TransaccionDTO`
-  * Mapea elementos `<order>` y `<remit>` de archivos XML a DTOs
-  * Convierte códigos de archivo a códigos de base de datos (servicios → conceptos, divisas, etc.)
-  * Determina valores de billetes y monedas según denominaciones
+  * Mapeo de datos de Excel a DTOs estructurados
+  * Conversión de formatos para integración con APIs
+  * Validación de datos antes del envío a APIs
+  * Manejo de múltiples clientes y solicitudes simultáneas
 
 * **Manejo de Errores**
   * Sistema de logging centralizado con rotación automática
@@ -69,19 +70,17 @@ AetherCore/
 │   │
 │   ├── infrastructure/            # Capa de infraestructura
 │   │   ├── config/                # Configuración
-│   │   ├── database/              # Acceso a base de datos
 │   │   ├── di/                    # Inyección de dependencias
 │   │   ├── excel/                 # Manejo de archivos Excel
 │   │   ├── file_system/           # Operaciones de sistema de archivos
 │   │   ├── logging/               # Ajustes para logs
-│   │   └── repositories/          # Implementaciones de repositorios
+│   │   └── notifications/         # Clientes de notificación (Lumen API)
 │   │
 │   └── presentation/              # Capa de presentación
-│       ├── api/                   # API
+│       ├── api/                   # Clientes de APIs (VCash, External)
 │       └── console/               # Interfaz de línea de comandos
 │
 ├── config/                        # Archivos de configuración YAML
-├── data/                          # Carpeta de datos (local/pruebas)
 ├── logs/                          # Logs del sistema
 ├── tests/                         # Pruebas automatizadas
 ├── .env.example                   # Plantilla de variables de entorno
@@ -97,15 +96,15 @@ AetherCore/
 * **Python:** 3.8 o superior
 * **Dependencias:**
   * pandas
-  * pyodbc
   * openpyxl
+  * requests
   * python-dotenv
   * pydantic>=2
   * pyyaml>=6
   * pydantic-settings
-* **Controlador ODBC para SQL Server:** 
-  * Windows: [ODBC Driver 17 for SQL Server](https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server?view=sql-server-ver17)
-  * Linux/macOS: [Instrucciones de instalación](https://docs.microsoft.com/en-us/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server)
+* **Conectividad:**
+  * Acceso a las 3 APIs (VCash, External, Lumen)
+  * Conexión a internet para llamadas API
 
 ## Configuración
 
@@ -114,56 +113,36 @@ AetherCore/
 Cree un archivo `.env` en la raíz del proyecto basado en `.env.example`:
 
 ```ini
-# Ambiente
-APP_ENV=DEV #DEV o PRD
+# =========================================================
+# AMBIENTE Y CONFIGURACIÓN GENERAL
+# =========================================================
+APP_ENV=DEV
+REFERENCE_SOURCE=ENUM
+TIEMPO_ESPERA_MONITOREO_GENERAL=10
+SYNC_APIS=false
 
-# ═══════════════════════════════════════════════════════════
-# BASE DE DATOS DE LECTURA (PRODUCCIÓN)
-# ═══════════════════════════════════════════════════════════
-# Esta conexión se usa para:
-# - Consultar datos de referencia (ciudades, clientes, puntos, sucursales)
-# - Obtener catálogos (servicios, categorías, divisas)
-# - Operaciones de solo lectura
+# =========================================================
+# RUTA DE CARPETAS EXCLUSIVAS
+# =========================================================
+BASE_DIR=C:\AetherCore
 
-SQL_SERVER_PROD=servidor-produccion
-SQL_DATABASE_PROD=base-datos-produccion
-SQL_USERNAME_PROD=usuario-lectura
-SQL_PASSWORD_PROD=password-lectura
+# =========================================================
+# CONFIGURACIÓN DE APIS
+# =========================================================
+# VCash API (Interna) - Para carga de servicios y eventos
+VCASH_API_URL=your_api_url
+AC4_AUTH_USER=your_username
+AC4_AUTH_PASSWORD=your_secure_password
 
-# ═══════════════════════════════════════════════════════════
-# BASE DE DATOS DE ESCRITURA (PRUEBAS/LOCAL)
-# ═══════════════════════════════════════════════════════════
-# Esta conexión se usa para:
-# - Insertar servicios mediante AddServiceTransaction
-# - Escribir en CgsServicios y CefTransacciones
-# - Operaciones de escritura
+# External API - Para órdenes de servicio
+EXTERNAL_API_URL=your_api_url
+EXTERNAL_API_USER=your_username
+EXTERNAL_API_PASSWORD=your_secure_password
+API_BULK_LIMIT=10
 
-TEST_SQL_DRIVER=ODBC Driver 17 for SQL Server
-TEST_SQL_SERVER=servidor-pruebas
-TEST_SQL_DATABASE=base-datos-pruebas
-TEST_SQL_USERNAME=usuario-escritura
-TEST_SQL_PASSWORD=password-escritura
-TEST_SQL_TRUSTED=0
-
-# Habilitar/deshabilitar inserción en BD (1=habilitado, 0=deshabilitado)
-ENABLE_TEST_DB_WRITE=1
-
-# ═══════════════════════════════════════════════════════════
-# RUTAS DE CARPETAS
-# ═══════════════════════════════════════════════════════════
-
-# Carpetas TXT
-CARPETA_ENTRADA_TXT=C:\RUTAS\ENTRADAS_TXT
-CARPETA_SALIDA_TXT=C:\RUTAS\SALIDA_TXT
-CARPETA_RESPUESTA_TXT=C:\RUTAS\SALIDAS_RESPUESTA_TXT
-CARPETA_GESTIONADOS_TXT=C:\RUTAS\ENTRADAS_TXT\GESTIONADOS
-CARPETA_ERRORES_TXT=C:\RUTAS\ENTRADAS_TXT\ERRORES
-
-# Carpetas XML
-CARPETA_ENTRADA_XML=C:\RUTAS\ENTRADAS_XML
-CARPETA_SALIDA_XML=C:\RUTAS\SALIDA_XML
-CARPETA_GESTIONADOS_XML=C:\RUTAS\ENTRADAS_XML\GESTIONADOS
-CARPETA_ERRORES_XML=C:\RUTAS\ENTRADAS_XML\ERRORES
+# Lumen API - Para notificaciones y alertas
+LUMEN_API_URL=lumen_api_url
+LUMEN_API_KEY=lumen_api_key
 
 # Configuración de Logging
 LOG_LEVEL=INFO
@@ -175,66 +154,58 @@ LOG_FILE=./logs/aethercore.log
 La aplicación espera la siguiente estructura de carpetas:
 
 ```
-.
-├── input/
-│   ├── txt/         # Archivos TXT de entrada
-│   └── xml/         # Archivos XML de entrada
-├── output/
-│   ├── txt/         # Archivos de salida TXT
-│   └── xml/         # Archivos de salida XML
-├── processed/       # Archivos procesados (backup)
-└── logs/            # Archivos de registro
+C:\AetherCore\
+├── [Cliente]/
+│   ├── [Solicitud]/
+│   │   ├── archivo.xlsx    # Archivos Excel de entrada
+│   │   └── errores/        # Archivos con errores
+│   └── ...
+└── logs/                  # Archivos de registro
 ```
 
-### 3. Configuración de Base de Datos
+### 3. Configuración de APIs
 
-#### a) Stored Procedure Requerido
+#### a) VCash API (Interna)
 
-El sistema requiere el stored procedure `AddServiceTransaction` instalado en la base de datos de escritura. Este procedimiento realiza las siguientes operaciones:
+Esta API se utiliza para:
+- Carga masiva de servicios procesados
+- Consulta de clientes autorizados
+- Registro de eventos de procesamiento
+- Actualización de estado de eventos
 
-- Inserta un registro en `CgsServicios`
-- Inserta un registro en `CefTransacciones` 
-- Relaciona ambos registros mediante claves foráneas
-- Retorna la Orden de Servicio generada (ej: "S-000123")
+**Endpoints principales:**
+- `POST /Auth/Login` - Autenticación
+- `POST /AetherCore/upload-services` - Carga masiva de servicios
+- `GET /AetherCore/clients` - Obtener lista de clientes
+- `POST /AetherCore/log` - Registrar evento
+- `PUT /AetherCore/log/{id}` - Actualizar evento
 
-**Estructura de parámetros principales:**
+#### b) External API
 
-```sql
-EXEC AddServiceTransaction
-    -- CgsServicios (Servicio)
-    @NumeroPedido,           -- ID único del pedido
-    @CodCliente,             -- Código del cliente
-    @CodSucursal,            -- Código de sucursal
-    @CodConcepto,            -- Tipo de servicio (1=Recolección, 2=Provisión Oficinas, 3=Provisión ATM)
-    @ValorBillete,           -- Valor en billetes
-    @ValorMoneda,            -- Valor en monedas
-    @ValorServicio,          -- Valor total del servicio
-    -- ... (más de 40 parámetros)
-    
-    -- CefTransacciones (Transacción)
-    @CefDivisa,              -- Divisa (COP, USD, etc.)
-    @CefTipoTransaccion,     -- Tipo (RC=Recolección, PV=Provisión)
-    @CefValorBilletesDeclarado,
-    @CefValorMonedasDeclarado,
-    @CefValorTotalDeclarado,
-    -- ... (más parámetros)
-```
+Esta API se utiliza para:
+- Creación de órdenes de servicio individuales
+- Creación masiva de órdenes (bulk)
+- Obtener mapeo de clientes
+- Obtener tipos de servicio
 
-#### b) Verificar Driver ODBC
+**Endpoints principales:**
+- `POST /auth/login/` - Autenticación
+- `POST /service-orders/` - Crear orden individual
+- `POST /service-orders/bulk/` - Crear órdenes masivas
+- `GET /clients/` - Obtener mapeo de clientes
+- `GET /service-types/` - Obtener tipos de servicio
 
-Asegúrese de tener configurado el controlador ODBC correspondiente a su sistema operativo:
+#### c) Lumen API
 
-**Windows:**
-```bash
-# Verificar drivers disponibles
-odbcad32.exe
-```
+Esta API se utiliza para:
+- Envío de notificaciones de errores críticos
+- Alertas de eventos importantes
+- Monitoreo de estado del sistema
 
-**Linux/macOS:**
-```bash
-# Verificar instalación
-odbcinst -q -d
-```
+**Configuración:**
+- URL del endpoint de notificaciones
+- API Key para autenticación
+- Canales de destino (email, SMS, etc.)
 
 ## Instalación
 
@@ -271,11 +242,11 @@ pip install -r requirements.txt
    copy .env.example .env
    ```
 
-2. Editar el archivo `.env` con sus configuraciones.
+2. Editar el archivo `.env` con las credenciales y URLs de las 3 APIs.
 
-3. Verificar conectividad a ambas bases de datos:
+3. Verificar conectividad a las APIs:
    ```bash
-   python test/test_connections.py
+   python test/test_api_connection.py
    ```
 
 ### 5. Instalación como Servicio de Windows (Opcional)
@@ -373,36 +344,14 @@ type logs\aethercore_*.log
 
 ### Modo Consola (Ejecución Manual)
 
-La aplicación se ejecuta a través de la línea de comandos con los siguientes parámetros:
+La aplicación se ejecuta a través de la línea de comandos:
 
 ```bash
-# Procesar archivos una sola vez (TXT y XML)
-python -m src.presentation.console.console_app --once
-
-# Monitorear carpetas en tiempo real (TXT y XML)
-python -m src.presentation.console.console_app --watch
-
-# Procesar solo archivos TXT
-python -m src.presentation.console.console_app --once --only txt
-
-# Procesar solo archivos XML
-python -m src.presentation.console.console_app --once --only xml
-
-# Monitorear solo carpetas TXT
-python -m src.presentation.console.console_app --watch --only txt
-
-# Monitorear solo carpetas XML
-python -m src.presentation.console.console_app --watch --only xml
+# Iniciar el monitoreo de carpetas en tiempo real
+python run.py
 ```
 
-### Opciones de Línea de Comandos
-
-| Opción      | Descripción                                      |
-|-------------|--------------------------------------------------|
-| `--once`    | Procesa los archivos una sola vez y termina      |
-| `--watch`   | Monitorea las carpetas en tiempo real           |
-| `--only`    | Filtra por tipo de archivo (txt/xml)            |
-| `--help`    | Muestra la ayuda                                 |
+La aplicación monitoreará automáticamente la carpeta configurada en `BASE_DIR` detectando archivos Excel (.xlsx, .xlsm) y procesándolos según la estructura de carpetas por cliente y solicitud.
 
 ## Monitoreo y Registros
 
@@ -431,12 +380,12 @@ LOG_FILE=./logs/aethercore.log
 
 ## Mantenimiento
 
-### Actualización de Datos de Referencia
+### Actualización de Configuración de APIs
 
-Los archivos de referencia se cargan al iniciar la aplicación. Para forzar una recarga:
+Las credenciales y configuraciones de APIs se cargan desde el archivo `.env` al iniciar la aplicación. Para actualizar:
 
 1. Detener la aplicación
-2. Actualizar los archivos en `input/reference/`
+2. Editar el archivo `.env` con las nuevas credenciales
 3. Reiniciar la aplicación
 
 ### Limpieza de Archivos Procesados
@@ -447,20 +396,27 @@ Se recomienda configurar una tarea programada para limpiar o archivar archivos a
 
 ### Problemas Comunes
 
-1. **Error de conexión a la base de datos**
+1. **Error de conexión a APIs**
    - Verificar credenciales en `.env`
-   - Comprobar que el servidor esté accesible
-   - Verificar que el controlador ODBC esté instalado
+   - Comprobar que las URLs sean correctas y accesibles
+   - Verificar conectividad a internet
+   - Revisar logs para detalles de errores HTTP
 
-2. **Archivos no se procesan**
+2. **Error de autenticación (401)**
+   - Verificar que las credenciales sean correctas
+   - Comprobar que el token no haya expirado
+   - El sistema reintenta automáticamente la autenticación
+
+3. **Archivos no se procesan**
    - Verificar permisos de las carpetas
-   - Comprobar que los archivos tengan la extensión correcta
+   - Comprobar que los archivos tengan la extensión correcta (.xlsx, .xlsm)
    - Revisar los logs en busca de errores
+   - Verificar la estructura de carpetas (Cliente/Solicitud)
 
-3. **Problemas de memoria**
-   - Reducir el tamaño de los lotes de procesamiento
-   - Aumentar la memoria asignada a Python
-   - Procesar archivos más pequeños
+4. **Timeout en llamadas API**
+   - Verificar la latencia de la red
+   - Aumentar los timeouts en la configuración si es necesario
+   - Reducir el tamaño de los lotes bulk (API_BULK_LIMIT)
 
 ## Contribución
 
@@ -469,6 +425,23 @@ Se recomienda configurar una tarea programada para limpiar o archivar archivos a
 3. Hacer commit de los cambios (`git commit -am 'Añadir nueva funcionalidad'`)
 4. Hacer push a la rama (`git push origin feature/nueva-funcionalidad`)
 5. Crear un Pull Request
+
+## Arquitectura de Integración API
+
+### Flujo de Procesamiento
+
+1. **Detección de Archivos**: El sistema monitorea la carpeta `BASE_DIR` detectando archivos Excel
+2. **Procesamiento**: Los archivos se procesan y mapean a DTOs estructurados
+3. **Integración VCash API**: Los servicios se cargan masivamente mediante la API interna
+4. **Integración External API**: Las órdenes de servicio se crean en el sistema externo
+5. **Notificaciones**: Eventos importantes se registran y errores críticos se notifican vía Lumen API
+
+### Manejo de Errores
+
+- **Reintentos automáticos**: Para errores de autenticación (401) y timeouts
+- **Logging detallado**: Payloads y respuestas se registran para debugging
+- **Notificaciones**: Errores críticos se envían a Lumen API
+- **Archivos con errores**: Se mueven a carpetas de errores para revisión manual
 
 ## Contacto / Soporte
 Para obtener ayuda o reportar problemas, por favor contacte con [Hxmirzzz](jamir08david@gmail.com)
