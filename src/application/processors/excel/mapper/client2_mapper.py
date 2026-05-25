@@ -93,6 +93,11 @@ class Client2Mapper(BaseExcelMapper):
 
                 numero_pedido_sintetico = f"{self.cod_cliente}-{fecha_serv.strftime('%Y%m%d')}-{codigo}"
 
+                if "RECOLECCION BLINDADA" in modalidad:
+                    service_type = "RC"
+                else:
+                    service_type = "PV"
+
                 dto = AetherServiceImportDto(
                     cod_cliente=int(self.cod_cliente),
                     cod_sucursal=1,
@@ -113,7 +118,7 @@ class Client2Mapper(BaseExcelMapper):
                     cef_numero_planilla=0,
                     valor_total_declarado=valor_total,
                     cef_divisa="COP",
-                    cef_tipo_transaccion="RC",
+                    cef_tipo_transaccion=service_type,
                     cef_estado_transaccion="RegistroTesoreria"
                 )
 

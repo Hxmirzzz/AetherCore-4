@@ -445,6 +445,15 @@ class ExcelProcessor:
         """
         Prepara el payload para enviar a la API externa.
         """
+        # Obtener mapeo de clientes desde la API externa
+        clients_mapping = {}
+        if self._external_api:
+            try:
+                clients_mapping = self._external_api.get_mapping_clients()
+                logger.info(f"✅ Mapeo de clientes obtenido: {len(clients_mapping)} clientes")
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudo obtener el mapeo de clientes: {e}")
+
         payload = []
         for dto in dtos:
             raw_point = str(dto.cod_punto_origen).strip()
@@ -466,6 +475,13 @@ class ExcelProcessor:
                 }
             ] if combo_quantity > 0 else []
 
+            bank_name = ""
+            if clients_mapping:
+                for nit, client_info in clients_mapping.items():
+                    if str(client_info.get("code", "")) == client_code:
+                        bank_name = client_info.get("name", "")
+                        break
+
             service = {
                 "client_code": client_code,
                 "service_type": dto.cef_tipo_transaccion,
@@ -475,7 +491,7 @@ class ExcelProcessor:
                 "declared_amount": monto_declarado,
                 "currency": "COP",
                 "observations": str(dto.observaciones or ""),
-                "bank_name": "",
+                "bank_name": bank_name,
                 "bank_account_number": "",
                 "bank_account_holder": "",
                 "requested_denominations": [],
