@@ -70,12 +70,15 @@ class Client3Mapper(BaseExcelMapper):
             self.tipo_archivo = 'ATM'
             self.col_codigo = df.columns[idx_atm_codigo]
 
-            idx_fecha = next((i for i, h in enumerate(super_headers) if "FECHASERVICIO" in h or "FECHASOLICITUD" in h),
-                             None)
-            if idx_fecha is None:
-                return False, "Estructura ATM inválida: Falta Fecha Servicio"
+            idx_fecha = next((i for i, h in enumerate(super_headers) if "FECHASERVICIO" in h or "FECHASOLICITUD" in h), None)
+            idx_valor = next((i for i, h in reversed(list(enumerate(super_headers))) if "TOTAL" in h or "MAQUINA" in h), None)
+
+            if idx_valor is None or idx_fecha is None:
+                return False, "Estructura ATM inválida: Faltan columnas críticas"
 
             self.col_fecha = df.columns[idx_fecha]
+            self.col_valor_total = df.columns[idx_valor]
+
             return True, "Estructura válida (ATM)"
 
         elif idx_rec_codigo is not None:
@@ -126,6 +129,7 @@ class Client3Mapper(BaseExcelMapper):
                 service_date = self._parsear_fecha(row.get(self.col_fecha))
                 now = datetime.now()
                 order_number = f"{self.cod_cliente}-{service_date.strftime('%Y%m%d')}-{code}-ATM"
+                total_value = self._parse_valor_monetario(row.get(self.col_valor_total, 0))
 
                 dto = AetherServiceImportDto(
                     cod_cliente=int(self.cod_cliente),
@@ -142,10 +146,10 @@ class Client3Mapper(BaseExcelMapper):
                     observaciones="",
                     valor_billete=0,
                     valor_moneda=0,
-                    valor_servicio=0,
+                    valor_servicio=total_value,
                     numero_kits_cambio=0,
                     cef_numero_planilla=0,
-                    valor_total_declarado=0,
+                    valor_total_declarado=total_value,
                     cef_divisa="COP",
                     cef_tipo_transaccion="PA",
                     cef_estado_transaccion="Programado"
@@ -170,7 +174,7 @@ class Client3Mapper(BaseExcelMapper):
                 service_date = self._parsear_fecha(raw_date)
                 now = datetime.now()
 
-                total_value = self._parse_valor_monterario(row.get(self.col_valor_total, 0))
+                total_value = self._parse_valor_monetario(row.get(self.col_valor_total, 0))
                 quantity = self._parse_entero(row.get(self.col_cantidad, 1))
 
                 obs = str(row.get(self.col_observacion, '')).strip().replace('\n', ' ').replace('\r', ' ')
