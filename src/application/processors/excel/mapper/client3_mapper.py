@@ -165,7 +165,9 @@ class Client3Mapper(BaseExcelMapper):
         for idx, row in df.iterrows():
             try:
                 code = str(row.get(self.col_codigo, '')).strip().replace('.0', '').replace(' ', '')
-                if not code or code.upper() == 'NAN' or "CODINT" in code.upper() or "ZONA" in code.upper():
+                upper_code = code.upper()
+
+                if not code or upper_code == 'NAN' or "COD" in upper_code or "ZONA" in upper_code or "FECHA" in upper_code or "TOTAL" in upper_code:
                     continue
 
                 raw_date = row.get(self.col_fecha)
@@ -210,7 +212,7 @@ class Client3Mapper(BaseExcelMapper):
         return dtos
 
     @staticmethod
-    def _parse_valor_monetario(self, val) -> Decimal:
+    def _parse_valor_monetario(val) -> Decimal:
         if pd.isna(val):
             return Decimal('0')
         s = str(val).replace('$', '').replace(' ', '').replace('_', '').strip()
@@ -234,14 +236,14 @@ class Client3Mapper(BaseExcelMapper):
             return Decimal('0')
 
     @staticmethod
-    def _parse_entero(self, val) -> int:
+    def _parse_entero(val) -> int:
         try:
             return int(float(str(val)))
         except:
             return 0
 
     @staticmethod
-    def _parsear_fecha(self, val) -> date:
+    def _parsear_fecha(val) -> date:
         if pd.isna(val) or not str(val).strip():
             return date.today()
 
