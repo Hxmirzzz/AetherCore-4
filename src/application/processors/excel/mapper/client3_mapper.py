@@ -46,6 +46,7 @@ class Client3Mapper(BaseExcelMapper):
             if pd.isna(text): return ""
             t = str(text).upper()
             t = t.replace('Á', 'A').replace('É', 'E').replace('Í', 'I').replace('Ó', 'O').replace('Ú', 'U')
+            t = t.replace('.', '').replace(',', '').replace('-', '').replace('_', '')
             return "".join(t.split())
 
         super_headers = []
@@ -164,7 +165,7 @@ class Client3Mapper(BaseExcelMapper):
         for idx, row in df.iterrows():
             try:
                 code = str(row.get(self.col_codigo, '')).strip().replace('.0', '').replace(' ', '')
-                if not code or code.upper() == 'NAN':
+                if not code or code.upper() == 'NAN' or "CODINT" in code.upper() or "ZONA" in code.upper():
                     continue
 
                 raw_date = row.get(self.col_fecha)
@@ -179,11 +180,6 @@ class Client3Mapper(BaseExcelMapper):
 
                 obs = str(row.get(self.col_observacion, '')).strip().replace('\n', ' ').replace('\r', ' ')
                 order_number = f"{self.cod_cliente}-{service_date.strftime('%Y%m%d')}-{code}-REC"
-
-                combo_lines = [{
-                    "combo_code": "COMBO_A",
-                    "quantity": quantity if quantity > 0 else 1
-                }]
 
                 dto = AetherServiceImportDto(
                     cod_cliente=int(self.cod_cliente),
@@ -206,14 +202,14 @@ class Client3Mapper(BaseExcelMapper):
                     valor_total_declarado=total_value,
                     cef_divisa="COP",
                     cef_tipo_transaccion="SC",
-                    cef_estado_transaccion="Programado",
-                    combo_lines=combo_lines
+                    cef_estado_transaccion="Programado"
                 )
                 dtos.append((dto, idx))
             except Exception as e:
                 logger.error(f"Error procesando fila {idx} (Recambio): {e}")
         return dtos
 
+    @staticmethod
     def _parse_valor_monetario(self, val) -> Decimal:
         if pd.isna(val):
             return Decimal('0')
@@ -237,12 +233,14 @@ class Client3Mapper(BaseExcelMapper):
         except:
             return Decimal('0')
 
+    @staticmethod
     def _parse_entero(self, val) -> int:
         try:
             return int(float(str(val)))
         except:
             return 0
 
+    @staticmethod
     def _parsear_fecha(self, val) -> date:
         if pd.isna(val) or not str(val).strip():
             return date.today()
