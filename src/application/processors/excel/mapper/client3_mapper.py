@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import curses.ascii
 from typing import List, Tuple, Dict, Any
 from datetime import datetime, date
 from decimal import Decimal
@@ -41,31 +40,60 @@ class Client3Mapper(BaseExcelMapper):
         pass
 
     def validar_estructura(self, df: pd.DataFrame) -> Tuple[bool, str]:
-        columns = [str(c).upper().strip() for c in df.columns]
-        df.columns = columns
+        if df.empty: return False, "Estructura non valida"
 
-        col_atm_codigo = next((c for c in columns if "CÓDIGO MAQUINA" in c or "CODIGO MAQUINA" in c), None)
-        col_rec_codigo = next((c for c in columns if "COD.INT" in c or "COD. INT" in c), None)
+        def clean_text(text):
+            if pd.isna(text): return ""
+            t = str(text).upper()
+            t = t.replace('Á', 'A').replace('É', 'E').replace('Í', 'I').replace('Ó', 'O').replace('Ú', 'U')
+            return "".join(t.split())
 
-        if col_atm_codigo:
+        super_headers = []
+        filas_a_escanear = min(10, len(df))
+
+        for col_idx in range(len(df.columns)):
+            col_parts = [str(df.columns[col_idx])]
+            for row_idx in range(filas_a_escanear):
+                val = df.iloc[row_idx, col_idx]
+                if not pd.isna(val):
+                    col_parts.append(str(val))
+
+            super_headers.append(clean_text(" ".join(col_parts)))
+
+        logger.info(
+            f"🔎 Radiografía detectada (ejemplo de la col 2): {super_headers[2] if len(super_headers) > 2 else 'N/A'}")
+
+        idx_atm_codigo = next((i for i, h in enumerate(super_headers) if "CODIGOMAQUINA" in h), None)
+        idx_rec_codigo = next((i for i, h in enumerate(super_headers) if "CODINT" in h), None)
+
+        if idx_atm_codigo is not None:
             self.tipo_archivo = 'ATM'
-            self.col_codigo = col_atm_codigo
-            self.col_fecha = next((c for c in columns if "FECHA SERVICIO" in c), None)
+            self.col_codigo = df.columns[idx_atm_codigo]
 
-            if not self.col_fecha:
+            idx_fecha = next((i for i, h in enumerate(super_headers) if "FECHASERVICIO" in h or "FECHASOLICITUD" in h),
+                             None)
+            if idx_fecha is None:
                 return False, "Estructura ATM inválida: Falta Fecha Servicio"
+
+            self.col_fecha = df.columns[idx_fecha]
             return True, "Estructura válida (ATM)"
 
-        elif col_rec_codigo:
+        elif idx_rec_codigo is not None:
             self.tipo_archivo = 'RECAMBIO'
-            self.col_codigo = col_rec_codigo
-            self.col_fecha = next((c for c in columns if "FECHA DE ENTREGA" in c), None)
-            self.col_valor_total = next((c for c in columns if "VAL. TOTAL" in c or "VALOR TOTAL" in c), None)
-            self.col_observacion = next((c for c in columns if "TEXTO BREVE" in c), None)
-            self.col_cantidad = next((c for c in columns if "CANTIDA" in c), None)
+            self.col_codigo = df.columns[idx_rec_codigo]
 
-            if not self.col_valor_total or not self.col_cantidad:
+            idx_fecha = next((i for i, h in enumerate(super_headers) if "FECHA" in h and "ENTREGA" in h), None)
+            idx_valor = next((i for i, h in enumerate(super_headers) if "VALTOTAL" in h or "VALORTOTAL" in h), None)
+            idx_obs = next((i for i, h in enumerate(super_headers) if "TEXTOBREVE" in h or "OBSERVACION" in h), None)
+            idx_cant = next((i for i, h in enumerate(super_headers) if "CANTIDAD" in h or "CANTIDA" in h), None)
+
+            if idx_valor is None or idx_cant is None:
                 return False, "Estructura Recambio inválida: Faltan columnas críticas"
+
+            self.col_fecha = df.columns[idx_fecha] if idx_fecha is not None else None
+            self.col_valor_total = df.columns[idx_valor]
+            self.col_observacion = df.columns[idx_obs] if idx_obs is not None else None
+            self.col_cantidad = df.columns[idx_cant]
             return True, "Estructura válida (RECAMBIO)"
 
         return False, "No se reconoció la estructura del archivo (Ni ATM ni Recambio)"
@@ -89,7 +117,10 @@ class Client3Mapper(BaseExcelMapper):
         for idx, row in df.iterrows():
             try:
                 code = str(row.get(self.col_codigo, '')).strip().replace('.0', '').replace(' ', '')
-                if not code or code.upper() == 'NAN':
+                upper_code = code.upper()
+
+                if not code or code.upper() == 'NAN' or "CODIGO" in upper_code or "MAQUINA" in upper_code or "TOTAL" in upper_code or "FECHA" in upper_code:
+                    logger.debug(f"Saltando fila {idx} por considerarse encabezado residual: {code}")
                     continue
 
                 service_date = self._parsear_fecha(row.get(self.col_fecha))
@@ -108,7 +139,7 @@ class Client3Mapper(BaseExcelMapper):
                     cod_punto_destino="",
                     numero_pedido=order_number,
                     cod_os_cliente=order_number,
-                    observaciones="Provisión de ATM",
+                    observaciones="",
                     valor_billete=0,
                     valor_moneda=0,
                     valor_servicio=0,
@@ -133,7 +164,7 @@ class Client3Mapper(BaseExcelMapper):
                     continue
 
                 raw_date = row.get(self.col_fecha)
-                if isinstance(raw_date, str) and any(curses.ascii.isalpha(c) for c in raw_date):
+                if isinstance(raw_date, str) and any(c.isalpha() for c in raw_date):
                     raw_date = row.get(f"{self.col_fecha}.1", raw_date)
 
                 service_date = self._parsear_fecha(raw_date)

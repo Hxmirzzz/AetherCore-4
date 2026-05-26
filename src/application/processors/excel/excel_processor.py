@@ -498,9 +498,9 @@ class ExcelProcessor:
                 "combo_lines": combo_lines
             }
 
-            if "-" in raw_point:
+            if dto.cef_tipo_transaccion == "PA":
                 service["atm_code"] = point
-            elif raw_point:
+            else:
                 service["point_code"] = point
 
             payload.append(service)

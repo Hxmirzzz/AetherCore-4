@@ -4,6 +4,7 @@ from src.application.processors.excel.mapper.standard_mapper import StandardExce
 from src.application.processors.excel.mapper.cash4u_mapper import Cash4uExcelMapper
 from src.application.processors.excel.mapper.emergency_mapper import EmergencyMapper
 from src.application.processors.excel.mapper.client2_mapper import Client2Mapper
+from src.application.processors.excel.mapper.client3_mapper import Client3Mapper
 
 class ExcelProcessorFactory:
     """
@@ -15,6 +16,9 @@ class ExcelProcessorFactory:
 
         if cod in ['2']:
             return Client2Mapper(cod)
+
+        if cod in ['3']:
+            return Client3Mapper(cod)
 
         if cod in ['4']:
             return EmergencyMapper(cod)
