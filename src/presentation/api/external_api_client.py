@@ -3,7 +3,8 @@ import logging
 import urllib3
 import json
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, List
+from src.infrastructure.notifications.lumen_client import LumenNotificationClient
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +41,22 @@ class ExternalApiClient:
                 logger.info("Authentication successful")
             else:
                 logger.warning("Authentication failed: no token received")
+                LumenNotificationClient().send_alert(
+                    app_name="AETHERCORE_4",
+                    subject="🚨 Falla Crítica de Autenticación (API Externa)",
+                    error_msg=f"VCashOperations rechazó el inicio de sesión. Código: {response.status_code}\nDetalle: {response.text[:200]}",
+                    severity="CRITICAL"
+                )
                 raise
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Error in POST request to {url}: {e}")
+            LumenNotificationClient().send_alert(
+                app_name="AETHERCORE_4",
+                subject="🚨 API Externa Inalcanzable",
+                error_msg=f"No me pude conectar a VCashOperations. El servidor podría estar apagado.\nError: {str(e)}",
+                severity="CRITICAL"
+            )
             raise
 
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:

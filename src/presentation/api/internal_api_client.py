@@ -4,6 +4,7 @@ from typing import List, Optional
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from src.application.dto.servicio_dto import AetherServiceImportDto
+from src.infrastructure.notifications.lumen_client import LumenNotificationClient
 
 class ApiService:
     def __init__(self, base_url: str, username: str, password: str):
@@ -28,7 +29,6 @@ class ApiService:
         }
         
         try:
-            self.logger.info(f"Intentando login para el usuario: {self.username}")
             response = self.session.post(login_url, json=payload, timeout=20, verify=False)
             
             if response.status_code in [200, 302]:
@@ -45,9 +45,21 @@ class ApiService:
                     return False
             else:
                 self.logger.error(f"Fallo de login. Código: {response.status_code} - {response.text}")
+                LumenNotificationClient().send_alert(
+                    app_name="AETHERCORE_4",
+                    subject="🚨 Falla Crítica de Autenticación (API Interna)",
+                    error_msg=f"VCashApp rechazó el inicio de sesión. Código: {response.status_code}\nDetalle: {response.text[:200]}",
+                    severity="CRITICAL"
+                )
                 return False
         except Exception as e:
             self.logger.error(f"Error de conexión durante el login: {str(e)}")
+            LumenNotificationClient().send_alert(
+                app_name="AETHERCORE_4",
+                subject="🚨 API Interna Inalcanzable",
+                error_msg=f"No me pude conectar a VCashApp. El servidor podría estar apagado.\nError: {str(e)}",
+                severity="CRITICAL"
+            )
             return False
 
     def _request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
