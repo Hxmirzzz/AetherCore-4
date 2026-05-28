@@ -50,20 +50,32 @@ class ApiService:
             self.logger.error(f"Error de conexión durante el login: {str(e)}")
             return False
 
+    def _request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
+        """Interceptor maestro que reintenta si el token de VCashApp expiró."""
+        if not self.is_authenticated:
+            if not self.login():
+                raise  Exception("Fallo de autenticación inicial en API interna")
+
+        response = self.session.request(method, endpoint, **kwargs)
+
+        if response.status_code == 401:
+            self.logger.warning("Token expirado (401). Reintentando login...")
+            self.is_authenticated = False
+            if self.login():
+                response = self.session.request(method, endpoint, **kwargs)
+
+        return response
+
     def upload_services(self, services: List[AetherServiceImportDto]) -> Optional[dict]:
         """
         Envía la lista de servicios al endpoint masivo asegurado con JWT.
         """
-        if not self.is_authenticated:
-            if not self.login():
-                return None
-        
         endpoint = f"{self.base_url}/AetherCore/upload-services"
         payload = [s.to_dict() for s in services]
         
         try:
             self.logger.info(f"Enviando {len(payload)} servicios al microservicio...")
-            response = self.session.post(endpoint, json=payload, timeout=60, verify=False)
+            response = self._request('POST', endpoint, json=payload, timeout=20, verify=False)
             
             if response.status_code == 200:
                 try:
@@ -94,29 +106,16 @@ class ApiService:
         """
         Consulta la API de VCash para obtener los clientes autorizados de AetherCore.
         """
-        if not self.is_authenticated:
-            if not self.login():
-                raise Exception("No se pudo iniciar sesión en la API para obtener clientes.")
-        
         endpoint = f"{self.base_url}/AetherCore/clients"
         
         try:
-            self.logger.info("Solicitando lista de clientes al microservicio...")
-            
-            response = self.session.get(endpoint, timeout=20, verify=False)
+            response = self._request('GET', endpoint, timeout=20, verify=False)
             
             if response.status_code == 200:
                 return response.json()
-                
-            elif response.status_code == 401:
-                self.logger.warning("Token expirado (401). Reintentando login...")
-                self.is_authenticated = False
-                return self.get_clients()
-                
             else:
-                self.logger.error(f"Error en el endpoint de clientes: {response.status_code} - {response.text}")
+                self.logger.error(f"Error en clientes:: {response.status_code} - {response.text}")
                 response.raise_for_status()
-
         except Exception as e:
             self.logger.error(f"Error al obtener clientes: {e}")
             raise
@@ -125,33 +124,16 @@ class ApiService:
         """
         Registra un evento en la API de VCash.
         """
-        if not self.is_authenticated:
-            if not self.login():
-                return None
-        
         endpoint = f"{self.base_url}/AetherCore/log"
-        
         try:
-            self.logger.info("Registrando evento en la API...")
-            
-            response = self.session.post(endpoint, json=log_data, timeout=15, verify=False)
+            response = self._request('POST', endpoint, json=log_data, timeout=15, verify=False)
             
             if response.status_code in [200, 201]:
                 return response.json()
-                
-            elif response.status_code == 401:
-                self.logger.warning("Token expirado (401). Reintentando login...")
-                self.is_authenticated = False
-                return self.register_event(log_data)
 
-            elif response.status_code == 400:
-                self.logger.error(f"Error en el endpoint de registro de eventos: {response.status_code} - {response.text}")
-                return None
-                
             else:
                 self.logger.error(f"Error en el endpoint de registro de eventos: {response.status_code} - {response.text}")
                 return None
-
         except Exception as e:
             self.logger.error(f"Error al registrar evento: {e}")
             return None
@@ -160,29 +142,13 @@ class ApiService:
         """
         Actualiza un evento en la API de VCash.
         """
-        if not self.is_authenticated:
-            if not self.login():
-                return None
-        
         endpoint = f"{self.base_url}/AetherCore/log/{log_id}"
         
         try:
-            self.logger.info(f"Actualizando evento en la API... ID: {log_id}")
-            
-            response = self.session.put(endpoint, json=status_data, timeout=10, verify=False)
-            
+            response = self._request('PUT', endpoint=endpoint, json=status_data, timeout=10, verify=False)
+
             if response.status_code in [200, 204]:
                 return response.json() if response.text else { "status": "success" }
-                
-            elif response.status_code == 401:
-                self.logger.warning("Token expirado (401). Reintentando login...")
-                self.is_authenticated = False
-                return self.update_event(log_id, status_data)
-
-            elif response.status_code == 400:
-                self.logger.error(f"Error en el endpoint de actualización de eventos: {response.status_code} - {response.text}")
-                return None
-                
             else:
                 self.logger.error(f"Error en el endpoint de actualización de eventos: {response.status_code} - {response.text}")
                 return None

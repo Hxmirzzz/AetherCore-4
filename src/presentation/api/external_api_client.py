@@ -3,7 +3,7 @@ import logging
 import urllib3
 import json
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +46,22 @@ class ExternalApiClient:
             logger.error(f"Error in POST request to {url}: {e}")
             raise
 
-    def create_service_order(self, order_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Crea una orden de servicio en la API externa."""
+    def _request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """Interceptor maestro que reintenta automáticamente si el token expiró (401)."""
         if not self.token:
             self.authenticate()
 
+        response = self.session.request(method, url, **kwargs)
+
+        if response.status_code == 401:
+            logger.warning("Token expired. Refreshing session.")
+            self.authenticate()
+            response = self.session.request(method, url, **kwargs)
+
+        return response
+
+    def create_service_order(self, order_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Crea una orden de servicio en la API externa."""
         url = f"{self.base_url}/service-orders/"
 
         logger.info("=" * 60)
@@ -59,7 +70,7 @@ class ExternalApiClient:
         logger.info("=" * 60)
         
         try:
-            response = self.session.post(url, json=order_data, timeout=15)
+            response = self._request('POST', url, json=order_data, timeout=30)
             if response.status_code >= 400:
                 logger.error(f"Error in POST request to {url}: {response.status_code}")
                 req = response.request
@@ -81,9 +92,6 @@ class ExternalApiClient:
             
     def create_bulk_orders(self, order_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Crea múltiples órdenes de servicio en la API externa."""
-        if not self.token:
-            self.authenticate()
-
         url = f"{self.base_url}/service-orders/bulk/"
         payload = {"orders": order_list}
 
@@ -93,7 +101,7 @@ class ExternalApiClient:
         logger.info("=" * 60)
 
         try:
-            response = self.session.post(url, json=payload, timeout=30)
+            response = self._request('POST', url, json=payload, timeout=30)
 
             if response.status_code >= 400:
                 logger.error(f"Error in POST request to {url}: {response.status_code}")
@@ -122,17 +130,13 @@ class ExternalApiClient:
 
     def get_mapping_clients(self) -> Dict[str, Any]:
         """Obtiene el mapeo de clientes de la API externa."""
-        if not self.token:
-            self.authenticate()
-
         url = f"{self.base_url}/clients/"
         try:
-            response = self.session.get(url, timeout=15)
+            response = self._request('GET', url, timeout=15)
             response.raise_for_status()
-            clients_data = response.json()
-
             mapping = {}
-            for client in clients_data:
+
+            for client in response.json():
                 nit = str(client.get("tax_identification", "")).strip()
                 code = client.get("client_code", "")
                 name = client.get("commercial_name", "") or client.get("business_name", "")
@@ -145,19 +149,15 @@ class ExternalApiClient:
 
     def get_service_types_mapping(self) -> Dict[str, str]:
         """Obtiene el mapeo de tipos de servicio de la API externa."""
-        if not self.token:
-            self.authenticate()
-
         url = f"{self.base_url}/service-types/"
         try:
-            response = self.session.get(url, timeout=15)
+            response = self._request('GET', url, timeout=15)
             response.raise_for_status()
-            service_types_data = response.json()
-
             mapping = {}
-            for service_type in service_types_data:
-                code = service_type.get("code", "")
-                name = service_type.get("name", "")
+
+            for st in response.json():
+                code = st.get("code", "")
+                name = st.get("name", "")
                 if code and name:
                     mapping[name] = code
             return mapping
