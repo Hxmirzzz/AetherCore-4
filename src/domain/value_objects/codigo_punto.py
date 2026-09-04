@@ -19,14 +19,11 @@ class CodigoPunto:
     valor: str
     
     def __post_init__(self):
-        if not self.valor or not self.valor.strip():
-            raise ValueError("El código de punto no puede estar vacío")
-        
-        # Normalizar y validar
         valor_limpio = self.valor.strip()
-        
-        # Validación opcional: formato básico
-        if not valor_limpio:
+
+        valores_prohibidos = ["", "NAN", "NONE", "NULL", "UNDEFINED"]
+
+        if not valor_limpio or valor_limpio.upper() in valores_prohibidos:
             raise ValueError("Código de punto inválido")
         
         object.__setattr__(self, 'valor', valor_limpio)
@@ -86,7 +83,6 @@ class CodigoPunto:
             return False
         # Comparar por parte numérica
         return self.parte_numerica == other.parte_numerica
-
 
 @dataclass(frozen=True)
 class CodigoCliente:

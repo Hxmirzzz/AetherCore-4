@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 from datetime import datetime
-import pandas as pd
+import time
 import openpyxl
 import uuid
 import json
@@ -43,6 +43,23 @@ class ExcelProcessor:
         self._api_bulk_limit = api_bulk_limit
         self._sync_apis = sync_apis
 
+    def _esperar_archivo_listo(self, ruta_archivo: Path, intentos: int = 5, espera_segundos: int = 2) -> bool:
+        """
+        Pregunta a Windows si el archivo ya está completamente escrito y libre.
+        """
+        ruta_str = str(ruta_archivo)
+        for intento in range(intentos):
+            try:
+                os.rename(ruta_str, ruta_str)
+                return True
+            except OSError:
+                logger.debug(
+                    f"⏳ Archivo ocupado por Windows. Esperando {espera_segundos}s (Intento {intento + 1}/{intentos})...")
+                time.sleep(espera_segundos)
+
+        logger.error(f"❌ El archivo {ruta_archivo.name} sigue bloqueado después de varios intentos.")
+        return False
+
     def procesar_archivo_excel(
         self,
         ruta_excel: Path,
@@ -58,6 +75,11 @@ class ExcelProcessor:
         Returns:
             True si procesó exitosamente, False en caso contrario
         """
+
+        if not self._esperar_archivo_listo(ruta_excel):
+            logger.warning(f"Saltando '{ruta_excel.name}' por ahora. Sigue bloqueado por el sistema operativo.")
+            return False
+
         log_id = None
         try:
             cliente_name = cliente_folder.folder_name
@@ -112,7 +134,12 @@ class ExcelProcessor:
             
                 for dto, idx_fila in datos_hoja:
                     punto = dto.cod_punto_origen if dto.cod_punto_origen != "FONDO" else dto.cod_punto_destino
-                    punto_limpio = CodigoPunto.from_raw(str(punto)).parte_numerica.strip() 
+                    codigo_objeto = CodigoPunto.from_raw(str(punto))
+                    punto_limpio = codigo_objeto.parte_numerica.strip()
+
+                    if punto_limpio == "9999" or "9999" in punto_limpio:
+                        logger.warning(f"⚠️ Fila {idx_fila} rechazada: Código punto inválido '{punto}' detectado.")
+                        continue
 
                     dto.cod_punto_origen = punto_limpio
                     dto.cod_punto_destino = ""
@@ -144,6 +171,20 @@ class ExcelProcessor:
                         logger.info(f"📦 Usando endpoint BULK (> {self._api_bulk_limit} órdenes)")
                         res_externa = self._external_api.create_bulk_orders(payload_externo)
                         exito_externo = res_externa.get("status") == "success"
+
+                        detalles_bulk = []
+                        for idx in range(cantidad_registros):
+                            if exito_externo:
+                                detalles_bulk.append({"success": True, "message": "OK"})
+                            else:
+                                detalles_bulk.append({"success": False, "message": res_externa.get("message",
+                                                                                                       "Error en envío masivo")})
+
+                        res_externa = {
+                            "status": "success" if exito_externo else "error",
+                            "details": detalles_bulk,
+                            "summary": f"{cantidad_registros} procesados en Bulk"
+                        }
                     else:
                         logger.info(f"📤 Usando envío INDIVIDUAL (<= {self._api_bulk_limit} órdenes)")
                         detalles_individual = []
@@ -178,7 +219,6 @@ class ExcelProcessor:
             }
 
             if self._sync_apis:
-                # Modo sincronizado: ambas APIs deben responder OK
                 if exito_interno and exito_externo:
                     logger.info("✅ Doble escritura exitosa. Ambas APIs aceptaron los datos.")
 
@@ -226,19 +266,19 @@ class ExcelProcessor:
                     self._manejar_excel_fallido(ruta_excel, cliente_name, razon_fallo_combinado)
                     return False
             else:
-                # Modo independiente: la API interna manda el resultado final
-                if exito_interno:
-                    if not exito_externo:
-                        logger.warning("⚠️ API Externa falló, pero SYNC_APIS=false. Proceso continúa por API interna.")
+                if res_externa and "details" in res_externa:
+                    if not exito_interno:
+                        logger.warning(
+                            "⚠️ API Interna (VCashApp) falló, pero la ignoramos. Generando novedades basadas en CashOS.")
                     else:
-                        logger.info("✅ Ambas APIs respondieron OK (modo independiente).")
+                        logger.info("✅ Ambas APIs respondieron (Generando resultados basados en CashOS).")
 
                     if log_id and self._api_service:
                         try:
                             self._api_service.update_event(log_id, {
-                                "estado": "COMPLETADO",
+                                "estado": "COMPLETADO" if exito_externo else "FALLIDO_PARCIAL",
                                 "responseJson": json.dumps(respuesta),
-                                "errorDetails": None,
+                                "errorDetails": None if exito_externo else "Errores reportados por CashOS",
                                 "processedBy": "AE4",
                                 "filePath": str(ruta_excel.absolute()),
                                 "recordCount": cantidad_registros,
@@ -247,10 +287,10 @@ class ExcelProcessor:
                         except Exception as e:
                             logger.error(f"Error al actualizar log: {e}")
 
-                    return self._gestionar_finalizacion(ruta_excel, cliente_name, res_interna, mapeo_filas_origen)
+                    return self._gestionar_finalizacion(ruta_excel, cliente_name, res_externa, mapeo_filas_origen)
                 else:
-                    razon_fallo = "Fallo en API Interna (VCashApp)."
-                    logger.error(f"❌ Abortando porque la API Interna falló: {razon_fallo}")
+                    razon_fallo = "Fallo crítico de comunicación con API Externa (VCash OS)."
+                    logger.error(f"❌ Abortando porque la API Externa falló o no está disponible: {razon_fallo}")
 
                     if log_id and self._api_service:
                         try:
